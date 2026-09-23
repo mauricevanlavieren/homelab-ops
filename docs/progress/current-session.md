@@ -1,618 +1,980 @@
-# Current Learning Session
+# Current Session — 2026-09-23
 
-**Date:** 2026-09-22  
-**Project:** Project 1 — Mini Platform  
-**Phase:** Linux Foundation / Mental Map  
-**Status:** In progress
+## Project
 
----
+**Project 1 — Mini Platform**
 
-# 1. Current Goal
+Goal:
 
-Build the Linux foundation required before installing k3s.
+```text
+Laptop
+  ↓
+Git / GitHub
+  ↓
+Ubuntu Server
+  ↓
+k3s
+  ↓
+Kubernetes
+  ↓
+Deployment
+  ↓
+Pod / Application
+  ↓
+Service
+  ↓
+Browser
+```
 
-The purpose is not to memorize Linux commands, but to understand the
-main Linux layers and learn how to investigate a system independently.
+Current phase:
 
-Current mental model:
-
-Linux
-├── Network
-├── Storage
-├── Processes
-├── Services
-├── Users & Permissions
-├── Logs
-└── Software / Packages
-
-The first six areas have now been explored practically.
-
-Software / Packages is the next Linux domain.
-
----
-
-# 2. Users & Permissions
-
-## Identity model
-
-Linux users are security identities.
-
-A user can represent:
-
-- a human
-- an administrator
-- a service account
-
-A process runs under a user identity.
-
-Example:
-
-mau
- └── bash
-      └── cat
-
-root
- └── privileged processes
-
-service account
- └── application process
-
-Important distinction:
-
-A service or process is not itself a user.
-A process runs AS a user.
+**Linux Foundation — completing the connected mental model before continuing with k3s.**
 
 ---
 
-## `/etc/passwd`
+# 1. Software / Packages
 
-Observed:
-
-root:x:0:0:root:/root:/bin/bash
-mau:x:1000:1000:Mau:/home/mau:/bin/bash
-
-Fields investigated:
-
-username
-password placeholder
-UID
-primary GID
-description
-home directory
-login shell
-
-`x` does not contain the password.
-
-Password information is stored separately in `/etc/shadow`.
-
----
-
-## File permissions
-
-Permission categories:
-
-OWNER | GROUP | OTHERS
-
-Permissions:
-
-r = read
-w = write
-x = execute / traverse
-
-Numeric representation:
-
-r = 4
-w = 2
-x = 1
-
-Examples practiced:
-
-644
-600
-400
-
-Test file:
-
-permissions-test.txt
-
-Permissions were deliberately changed.
-
-At `400`, writing to the file failed with:
-
-Permission denied
-
-This demonstrated the difference between:
-
-- ownership
-- file permissions
-- ability to change file contents
-- ability of the owner to change the permission mode
-
----
-
-## `/etc/shadow`
-
-Observed permissions:
-
--rw-r----- root shadow /etc/shadow
-
-Interpretation:
-
-owner: root
-permissions: rw-
-
-group: shadow
-permissions: r--
-
-others:
-permissions: ---
-
-User `mau` is neither root nor a member of the shadow group.
-
-Therefore `mau` falls into:
-
-OTHERS
-
-and cannot directly read `/etc/shadow`.
-
-This was verified experimentally.
-
----
-
-# 3. sudo and Least Privilege
-
-Investigated `/etc/group`.
-
-Relevant evidence:
-
-sudo:x:27:mau
-
-This shows that `mau` is a member of the supplementary `sudo` group.
-
-Investigated sudo policy.
-
-Relevant `/etc/sudoers` rule:
-
-%sudo ALL=(ALL:ALL) ALL
-
-Interpretation:
-
-%sudo
-→ WHO: members of the sudo group
-
-first ALL
-→ WHERE: hosts
-
-(ALL:ALL)
-→ run command as any user / group
-
-final ALL
-→ allowed commands
-
-Important correction learned:
-
-The final `ALL` does NOT directly grant all file permissions.
-
-It allows commands to be executed with another identity.
-
-The resulting process identity and filesystem permissions determine
-what that process can actually access.
-
-Effective sudo permissions were checked with:
-
-sudo --list
-
-Observed:
-
-User mau may run the following commands on homeserver:
-    (ALL : ALL) ALL
-
----
-
-# 4. Services and Processes
-
-Observed SSH:
-
-systemctl status ssh
-
-Evidence:
-
-ssh.service
-→ systemd service/unit
-
-sshd
-→ actual running process
-
-PID 1088
-→ identifies the process
-
-Important distinction:
-
-SERVICE
-→ management abstraction / desired functionality
-
-PROCESS
-→ actual running instance of a program executed by the CPU
-
-Connection:
-
-systemd
-   ↓ manages
-ssh.service
-   ↓ starts/manages
-sshd
-   ↓
-process PID 1088
-
-This distinction still needs repetition in future exercises.
-
----
-
-# 5. Network Sockets
-
-Investigated active TCP connections with:
-
-ss -tn
-
-Observed established SSH connections between:
-
-homeserver:
-192.168.0.10:22
-
-laptop:
-192.168.0.111:<ephemeral-port>
-
-Then investigated listening TCP sockets:
-
-ss -tln
-
-Flags:
-
--t = TCP
--l = listening
--n = numeric
-
-Observed:
-
-0.0.0.0:22
-[::]:22
-
-SSH is listening on TCP port 22.
-
-Also observed:
-
-127.0.0.53:53
-127.0.0.54:53
-
-Port 53 was recognized as DNS-related.
-
----
-
-# 6. Cross-Layer Investigation
-
-Used:
-
-sudo ss -tlnp
-
-Additional flag:
-
--p = show process using socket
-
-Without sufficient privileges, process information may not be visible.
-
-With sudo, observed:
-
-0.0.0.0:22
-→ sshd
-→ PID 1088
-
-127.0.0.53:53
-→ systemd-resolve
-→ PID 761
-
-This connected multiple Linux layers:
-
-SERVICE
-   ↓
-PROCESS
-   ↓
-PID
-   ↓
-NETWORK SOCKET
-   ↓
-IP : PORT
-
-Example:
-
-ssh.service
-   ↓
-sshd
-   ↓
-PID 1088
-   ↓
-TCP
-   ↓
-0.0.0.0:22
-
-This also reinforced least privilege:
-
-sudo was used because additional process information was required,
-not simply because "the command doesn't work".
-
----
-
-# 7. Logs
+Today the Ubuntu package-management chain was connected and practiced.
 
 Mental model:
 
-systemctl status <service>
-→ What is the service doing NOW?
+```text
+Repository
+    ↓
+apt update
+    ↓
+local package catalog
+    ↓
+Package
+    ├── version
+    └── dependencies
+            ↓
+      install / remove
+            ↓
+    installed software
+```
 
-journalctl -u <service>
-→ What happened over TIME?
+Important distinction:
 
-Investigated SSH logs:
+```text
+apt update
+→ refreshes local package information
 
-journalctl -u ssh
+apt list --upgradable
+→ compares installed packages with local catalog
 
-Observed events including:
+apt upgrade
+→ actually changes installed packages
+```
 
-- SSH service startup
-- listening on port 22
-- successful authentication
-- session creation
-- service shutdown
-- reboot boundary
-- service restart
+## Repository configuration
 
-Example troubleshooting path:
+Observed:
 
-Problem
-   ↓
-identify domain
-   ↓
+```text
+/etc/apt/sources.list.d/ubuntu.sources
+```
+
+Repositories include:
+
+```text
+http://nl.archive.ubuntu.com/ubuntu/
+http://security.ubuntu.com/ubuntu/
+```
+
+Ubuntu release:
+
+```text
+noble = Ubuntu 24.04 LTS
+```
+
+Important distinction:
+
+```text
+URI
+→ where repository data comes from
+
+Signed-By
+→ key used to verify repository metadata
+```
+
+Repository signing/security will be covered later.
+
+---
+
+# 2. Permissions transfer exercise
+
+Running:
+
+```bash
+apt update
+```
+
+without sudo produced:
+
+```text
+Could not open lock file /var/lib/apt/lists/lock
+Permission denied
+```
+
+Investigated:
+
+```bash
+ls -ld /var/lib/apt/lists/
+```
+
+Result:
+
+```text
+drwxr-xr-x root root
+```
+
+Needed to determine which permission category user `mau` belongs to.
+
+Discovered:
+
+```bash
+id mau
+```
+
+Result:
+
+```text
+uid=1000(mau)
+gid=1000(mau)
+groups=1000(mau),4(adm),24(cdrom),27(sudo),30(dip),46(plugdev),101(lxd)
+```
+
+Conclusion:
+
+```text
+directory owner = root
+directory group = root
+
+mau ≠ root user
+mau ∉ root group
+
+→ mau falls under "others"
+→ others has r-x
+→ no write permission
+→ apt cannot modify /var/lib/apt/lists/
+```
+
+Using:
+
+```bash
+sudo apt update
+```
+
+worked because APT was then executed with elevated privileges.
+
+This was transfer evidence for:
+
+- UID/GID
+- groups
+- owner/group/others
+- rwx
+- sudo
+- least privilege
+
+Not yet sufficient for 🟢 because ≥48h retention evidence is still required.
+
+---
+
+# 3. Package lifecycle practical lab
+
+Used `cowsay` as a safe test package.
+
+Initial verification:
+
+```bash
+apt list --installed cowsay
+```
+
+No package returned.
+
+Installed:
+
+```bash
+sudo apt install cowsay
+```
+
+Observed lifecycle:
+
+```text
+Get
+ ↓
+Selecting
+ ↓
+Unpacking
+ ↓
+Setting up
+```
+
+Verified:
+
+```bash
+apt list --installed cowsay
+```
+
+Result:
+
+```text
+cowsay/noble,now 3.03+dfsg2-8 all [installed]
+```
+
+Removed:
+
+```bash
+sudo apt remove cowsay
+```
+
+APT reported:
+
+```text
+1 to remove
+93.2 kB disk space will be freed
+```
+
+Verified removal:
+
+```bash
+apt list --installed cowsay
+```
+
+No package returned.
+
+## Manual vs automatic packages
+
+Observed earlier:
+
+```text
+curl [installed,automatic]
+cowsay [installed]
+```
+
+Mental model:
+
+```text
+manual
+→ explicitly requested package
+
+automatic
+→ installed because another package needed it as a dependency
+```
+
+APT can therefore later recognize dependencies that may no longer be required.
+
+---
+
+# 4. Linux troubleshooting mini-boss
+
+Scenario:
+
+```text
+ssh: connect to host 192.168.0.10 port 22:
+Connection refused
+```
+
+Goal was to troubleshoot conceptually instead of trying random commands.
+
+Investigation route developed:
+
+```text
+Laptop
+  ↓
+Network reachability
+  ↓
+Server
+  ↓
 Service
-   ↓
-systemctl status
-   ↓
-need historical explanation
-   ↓
-Logs
-   ↓
-journalctl
-   ↓
-filter evidence
+  ↓
+Process
+  ↓
+Listening socket
+  ↓
+Firewall
+  ↓
+Authentication / application
+```
 
----
+## Network reachability
 
-## Time filtering
+First hypothesis:
 
-Found and used:
+```text
+Can the laptop reach the homeserver?
+```
 
--S / --since
+Use ping.
 
-Final successful query:
+If ping succeeds, basic IP reachability exists and investigation moves higher in the stack.
 
-journalctl -u ssh -S "2026-9-22 16:00"
+## SSH service
 
-Result contained only SSH events after the requested time.
+Investigated:
 
-This exercise also exposed an important troubleshooting lesson:
-
-A command can be syntactically correct while the input value is wrong.
-
-Two incorrect dates were detected and corrected before obtaining the
-intended evidence.
-
----
-
-# 8. Connected Linux Mental Model
-
-Today's strongest result was connecting previously separate concepts.
-
-Current model:
-
-USER / IDENTITY
-      │
-      │ permissions
-      ▼
-SERVICE ── managed by ──> systemd
-      │
-      ▼
-PROCESS
-      │
-      ├── PID
-      │
-      └── runs as USER
-      │
-      ▼
-NETWORK SOCKET
-      │
-      ▼
-IP : PORT
-
-And for troubleshooting:
-
-PROBLEM
-   ↓
-DOMAIN
-   ↓
-OBSERVATION TOOL
-   ↓
-EVIDENCE
-   ↓
-HYPOTHESIS
-   ↓
-VERIFY
-
-Example:
-
-SSH problem
-   ↓
-Services
-   ↓
+```bash
 systemctl status ssh
+```
+
+Evidence:
+
+```text
+ssh.service - OpenBSD Secure Shell server
+Active: active (running)
+Main PID: 1088 (sshd)
+```
+
+Connected model:
+
+```text
+systemd
+   ↓ manages
+ssh.service
+   ↓ manages/starts
+sshd
    ↓
-sshd running?
-   ↓
-Logs
-   ↓
-journalctl -u ssh
-   ↓
-Network
-   ↓
-ss -tlnp
-   ↓
-Is port 22 actually listening?
+process PID 1088
+```
+
+## Listening socket
+
+Investigated:
+
+```bash
+ss -tln
+```
+
+Evidence:
+
+```text
+0.0.0.0:22 LISTEN
+[::]:22      LISTEN
+```
+
+Meaning:
+
+```text
+0.0.0.0:22
+→ listen on TCP port 22 on all local IPv4 interfaces
+
+[::]:22
+→ IPv6 equivalent
+```
+
+Also observed:
+
+```bash
+ss -tl
+```
+
+shows:
+
+```text
+:ssh
+```
+
+while:
+
+```bash
+ss -tln
+```
+
+shows:
+
+```text
+:22
+```
+
+`-n` prevents service-name translation and shows numeric ports.
+
+## Client configuration
+
+Investigated:
+
+```bash
+ssh -G server
+```
+
+Evidence:
+
+```text
+user mau
+hostname 192.168.0.10
+port 22
+```
+
+Therefore the client configuration targets:
+
+```text
+mau@192.168.0.10:22
+```
 
 ---
 
-# 9. Search / Investigation Strategy
+# 5. Firewall — missing prerequisite discovered
 
-Current Linux investigation route:
+The mini-boss exposed a missing connection in the Linux mental model.
 
-1. Identify the domain/layer
-2. Formulate the exact question
-3. Identify the manager/source of truth
-4. Find the appropriate tool
-5. Inspect help/man page when needed
-6. Observe evidence
-7. Interpret before changing anything
+Previously:
 
-General model:
+```text
+client
+ ↓
+network
+ ↓
+socket
+ ↓
+service
+```
 
-PROBLEM
-   ↓
-DOMAIN / LAYER
-   ↓
-MANAGER / SOURCE
-   ↓
-TOOL
-   ↓
-EVIDENCE
+Improved model:
 
-Commands and flags themselves are mostly:
+```text
+client
+ ↓
+network
+ ↓
+firewall
+ ↓
+socket / port
+ ↓
+service
+ ↓
+process
+```
 
-📖 OPZOEKEN
+Important distinction:
 
-The mental model and investigation route are:
+```text
+ss
+→ Is something listening on this port?
 
-🧠 KENNEN
+firewall
+→ Is network traffic allowed to reach it?
+```
 
-Using them on real systems is:
+Investigated UFW:
 
-🔧 KUNNEN
+```bash
+sudo ufw status verbose
+```
+
+Result:
+
+```text
+Status: inactive
+```
+
+Therefore UFW currently does not enforce firewall rules on the homeserver.
+
+Important security lesson:
+
+Do not blindly enable a firewall on a remotely administered server.
+
+If incoming traffic defaults to DENY and SSH is not allowed first:
+
+```text
+Laptop
+  ↓
+SSH :22
+  ↓
+FIREWALL
+  ✕
+  ↓
+sshd
+```
+
+the administrator can lock themselves out.
+
+Firewall concept is now connected but not independently proven.
 
 ---
 
-# 10. Evidence Created Today
+# 6. Linux filesystem layout
 
-Real evidence used during the session:
+Started building a filesystem search map.
 
-- `/etc/passwd`
-- `/etc/group`
-- `/etc/shadow` permissions
-- `/etc/sudoers`
-- `sudo --list`
-- file permission experiment
+Root filesystem:
+
+```text
+/
+├── etc
+├── home
+├── usr
+├── var
+├── run
+├── tmp
+├── boot
+└── ...
+```
+
+Current useful mental labels:
+
+```text
+/etc
+→ system-wide configuration
+
+/home
+→ personal files/environment of normal users
+
+/var
+→ changing system/application data
+
+/usr
+→ installed programs, libraries and related files
+
+/run
+→ runtime information for the current boot
+```
+
+Only `/etc`, `/home`, `/var` and the beginning of `/usr` were explored today.
+
+---
+
+# 7. /etc
+
+Previously observed:
+
+```text
+/etc/netplan/
+/etc/apt/
+/etc/passwd
+/etc/group
+/etc/shadow
+/etc/sudoers
+```
+
+Mental label:
+
+```text
+/etc
+→ system-wide configuration
+```
+
+Search principle:
+
+```text
+"How is this Linux system configured?"
+              ↓
+            /etc
+```
+
+---
+
+# 8. /home
+
+For user `mau`:
+
+```text
+/home/mau
+```
+
+Contains the personal environment/files/directories of the user.
+
+Special case:
+
+```text
+root user's home
+→ /root
+```
+
+not:
+
+```text
+/home/root
+```
+
+---
+
+# 9. /var and logs
+
+Observed:
+
+```text
+/var
+├── backups
+├── cache
+├── crash
+├── lib
+├── log
+├── mail
+├── spool
+└── tmp
+```
+
+Mental model:
+
+```text
+/var
+→ variable/changing data produced during system operation
+```
+
+Observed:
+
+```text
+/var/log
+├── apt
+├── auth.log
+├── dpkg.log
+├── journal
+├── kern.log
+└── syslog
+```
+
+Used filesystem structure as a search strategy:
+
+```text
+Question:
+"What did APT do?"
+       ↓
+Need historical information
+       ↓
+logs
+       ↓
+/var/log
+       ↓
+APT
+       ↓
+/var/log/apt
+```
+
+Observed:
+
+```text
+/var/log/apt/
+├── history.log
+├── term.log
+└── eipp.log.xz
+```
+
+`history.log` contained evidence from today's package lab:
+
+```text
+Start-Date: 2026-09-23 08:52:19
+Commandline: apt install cowsay
+Requested-By: mau (1000)
+Install: cowsay:amd64 (3.03+dfsg2-8)
+
+Start-Date: 2026-09-23 08:56:26
+Commandline: apt remove cowsay
+Requested-By: mau (1000)
+Remove: cowsay:amd64 (3.03+dfsg2-8)
+```
+
+This connected:
+
+```text
+filesystem
+   +
+logs
+   +
+APT
+   +
+user identity
+   +
+UID 1000
+```
+
+---
+
+# 10. /usr and command discovery
+
+Investigated where `ls` exists:
+
+```bash
+whereis ls
+```
+
+Result:
+
+```text
+ls: /usr/bin/ls /usr/share/man/man1/ls.1.gz
+```
+
+Meaning:
+
+```text
+/usr/bin/ls
+→ executable program
+
+/usr/share/man/man1/ls.1.gz
+→ manual/documentation
+```
+
+This introduced the question:
+
+```text
+Why can the user type:
+
+ls
+
+instead of:
+
+/usr/bin/ls
+```
+
+---
+
+# 11. PATH — CURRENT LEARNING EDGE
+
+Found Bash documentation:
+
+```text
+PATH
+The search path for commands.
+```
+
+PATH is a colon-separated list of directories.
+
+Observed current PATH:
+
+```bash
+echo $PATH
+```
+
+Result:
+
+```text
+/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin
+```
+
+Initial mental model:
+
+```text
+command: ls
+   ↓
+Bash
+   ↓
+PATH
+   ↓
+search directories
+   ↓
+/usr/bin
+   ↓
+/usr/bin/ls
+```
+
+However this concept is NOT yet sufficiently connected.
+
+The important conceptual problem discovered:
+
+Previous programming experience created this question:
+
+> "If a variable exists, where was it originally defined?"
+
+Current distinction being developed:
+
+```text
+ON SSD                         DURING EXECUTION / RAM
+
+configuration/code      →      process environment
+                                  │
+                                  └── PATH=...
+```
+
+Analogy with Python:
+
+```text
+app.py on SSD
+naam = "Maurice"
+      ↓
+Python starts
+      ↓
+Python process in RAM
+      ↓
+variable exists during execution
+```
+
+For Linux/Bash we need to understand:
+
+```text
+Fresh PC
+  ↓
+Ubuntu installation
+  ↓
+configuration/files on SSD
+  ↓
+boot
+  ↓
+kernel
+  ↓
+systemd
+  ↓
+login
+  ↓
+Bash starts
+  ↓
+environment is constructed
+  ↓
+PATH exists for the running shell/process
+```
+
+This connection is NOT finished.
+
+---
+
+# Exact stopping point
+
+Do NOT continue directly with more PATH syntax.
+
+Next session starts with the conceptual question:
+
+> **Where does the PATH value originally come from on disk/configuration when a fresh Ubuntu system boots and user `mau` logs in?**
+
+Build the connection:
+
+```text
+SSD/configuration
+      ↓
+boot/login
+      ↓
+Bash process
+      ↓
+environment
+      ↓
+PATH
+      ↓
+command lookup
+      ↓
+/usr/bin/ls
+```
+
+Use the real homeserver to investigate this chain.
+
+After PATH:
+
+1. finish `/usr`
+2. `/run`
+3. boot process
+4. DNS/resolution connection
+5. Linux Foundation mini-boss / assessment
+6. return to Project 1
+7. install/build k3s
+8. first Kubernetes workload
+
+---
+
+# Evidence collected today
+
+Practical evidence:
+
+- `apt update` permission failure investigated
+- `id mau`
+- permissions on `/var/lib/apt/lists`
+- successful `sudo apt update`
+- APT repository configuration inspected
+- package versions inspected
+- `cowsay` installed
+- installation verified
+- `cowsay` removed
+- removal verified
+- APT history verified in `/var/log/apt/history.log`
 - `systemctl status ssh`
-- `journalctl -u ssh`
-- `journalctl --since`
-- `ss -tn`
+- `ss -tl`
 - `ss -tln`
-- `sudo ss -tlnp`
-- real SSH connections
-- real listening sockets
-- real process IDs
-- real DNS resolver sockets
-
-No simulated environment was used.
-
----
-
-# 11. Skill Status
-
-Important:
-
-Today's exercises provide evidence of guided understanding and practical
-application.
-
-They do NOT yet prove independent mastery.
-
-Current retention rule:
-
-A skill can only become 🟢 Independent after:
-
-- criteria have been completed
-- it can be reproduced independently
-- it is applied in another practical context
-- it is reproduced again after at least 48 hours
-- the learner can explain why it works
-
-Earliest retention evidence from today's Users & Permissions / Logs work:
-
-2026-09-24
-
-Do not simply repeat the same questions.
-
-Future assessment should test transfer into another real problem.
+- `ssh -G server`
+- `sudo ufw status verbose`
+- Linux filesystem root inspected
+- `/var` inspected
+- `/var/log` inspected
+- `/var/log/apt` inspected
+- `/usr/bin/ls` discovered
+- current `$PATH` inspected
 
 ---
 
-# 12. Current Linux Foundation Status
+# Skill observations — 2026-09-23
 
-Network              🟡 Guided
-Storage              🟡 Guided
-Processes            🟡 Guided
-Services             🟡 Guided
-Users & Permissions  🟡 Guided
-Logs                 🟡 Guided
-Software / Packages  🔴 Not started
+## Stronger evidence today
 
-Note:
+### Linux troubleshooting
 
-🟡 does not mean all commands are remembered.
+Demonstrated ability to move through:
 
-It means the concepts have been explored and applied with guidance.
+```text
+network
+→ service
+→ process
+→ socket
+```
+
+Firewall was not spontaneously recognized because this prerequisite had not yet been connected.
+
+### Users & Permissions
+
+Previous knowledge was successfully reused in a new APT permission problem.
+
+This is transfer evidence, but it occurred less than 48 hours after the original learning session.
+
+Therefore:
+
+**NO promotion to 🟢 yet.**
+
+Earliest retention test remains:
+
+**2026-09-24**
+
+### Software / Packages
+
+Package-management mental model and practical lifecycle completed under guidance.
+
+Current status:
+
+🟡 2 — Begeleid
+
+### Firewall
+
+Concept now recognized and connected to network troubleshooting.
+
+Current evidence:
+
+🟠/🟡 transition — not independently demonstrated yet.
+
+### Filesystem layout
+
+Beginning to use filesystem structure as a search strategy instead of memorizing paths.
+
+Current status:
+
+🟡 2 — Begeleid
+
+### PATH / environment
+
+Concept currently incomplete.
+
+Do not score as independently understood.
 
 ---
 
-# 13. Exact Stopping Point
+# Skill Passport
 
-Linux Foundation is intentionally paused BEFORE:
+No level promotion today.
 
-Software / Packages
+Important rule:
 
-Next question:
+```text
+Seeing ≠ knowing
+Using once ≠ independent mastery
+```
 
-"How does software actually get onto an Ubuntu server?"
+🟢 requires:
 
-Start from the existing Windows mental model:
-
-Windows software installation
-        ↓
-compare similarities/differences
-        ↓
-Ubuntu package/software model
-        ↓
-real investigation on homeserver
-
-Do NOT start with k3s installation yet.
-
-After Software / Packages, reconnect the complete Linux mental map and
-then return to Project 1 / k3s.
+- criteria completed
+- independently reproduced/applied
+- applied in another practical situation
+- reproduced after ≥48 hours
+- explanation of why it works
 
 ---
 
-# DAILY SKILL PROGRESS — 2026-09-22
+# DAILY SKILL PROGRESS — 23-09-2026
 
-No unsupported percentages are recorded yet.
-
-Percentages will only be added after objective evidence criteria have
-been defined for each major skill.
+```text
+╔════════════════════ DAILY SKILL PROGRESS — 23-09-2026 ════════════════════╗
 
                                       LEVEL
-
  1  Git / Repository / Governance     🟡 2
  2  Linux                             🟡 2
  3  Server Foundation                 🟡 2
@@ -632,39 +994,37 @@ been defined for each major skill.
 17  Employer Portfolio / Assessment   🟠 1
 18  Final Zero-to-Production Rebuild  🔴 0
 
+TODAY'S EVIDENCE
+
+Linux
+  ▲ package management lifecycle
+  ▲ troubleshooting across multiple layers
+  ▲ filesystem search strategy
+  ▲ /etc /home /var /usr connections
+
+Security
+  ▲ sudo/permissions transfer
+  ▲ firewall introduced
+  ▲ least-privilege reasoning reinforced
+
+Troubleshooting
+  ▲ ping → service → process → socket
+  ▲ hypotheses eliminated using evidence
+  ▲ missing firewall prerequisite identified
+
+RETENTION
+
+Users & Permissions:
+next eligible independent retention evidence ≥ 24-09-2026
+
 LEVELS
+🔴 0 Niet bekend    🟠 1 Herkenning    🟡 2 Begeleid
+🟢 3 Zelfstandig    🔵 4 Engineer      🟣 5 Architect
 
-🔴 0 Not known
-🟠 1 Recognition
-🟡 2 Guided
-🟢 3 Independent
-🔵 4 Engineer
-🟣 5 Architect
+🟢 requires independent evidence + reproduction ≥48h later
 
-🟢 requires independent evidence and retention evidence ≥48h later.
+NOTE:
+Percentages intentionally omitted until objective per-skill criteria are defined.
 
----
-
-# Next Session
-
-START HERE:
-
-Software / Packages
-
-First conceptual question:
-
-"On Windows, how would you normally install software such as Chrome?"
-
-Then build the bridge:
-
-Windows software model
-        ↓
-Linux software/package model
-        ↓
-Ubuntu package management
-        ↓
-real homeserver investigation
-        ↓
-complete Linux foundation
-        ↓
-return to k3s
+╚═════════════════════════════════════════════════════════════════════════════╝
+```
