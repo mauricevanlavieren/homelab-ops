@@ -1,15 +1,24 @@
-# Current Session — 2026-09-23
+# Current Session — 24-09-2026
 
 ## Project
+Production-Grade Platform Engineering Lab
 
-**Project 1 — Mini Platform**
+### Current project
+Project 1 — Mini Platform
 
-Goal:
+### Current phase
+Kubernetes foundation and first workload
+
+---
+
+# Session Goal
+
+Continue from the clean Ubuntu Server foundation and build the first working Kubernetes platform.
+
+Target architecture:
 
 ```text
 Laptop
-  ↓
-Git / GitHub
   ↓
 Ubuntu Server
   ↓
@@ -19,1012 +28,1279 @@ Kubernetes
   ↓
 Deployment
   ↓
-Pod / Application
+ReplicaSet
+  ↓
+Pod
+  ↓
+Container
   ↓
 Service
+  ↓
+NodePort
   ↓
 Browser
 ```
 
-Current phase:
-
-**Linux Foundation — completing the connected mental model before continuing with k3s.**
-
 ---
 
-# 1. Software / Packages
+# 1. k3s Installation
 
-Today the Ubuntu package-management chain was connected and practiced.
-
-Mental model:
-
-```text
-Repository
-    ↓
-apt update
-    ↓
-local package catalog
-    ↓
-Package
-    ├── version
-    └── dependencies
-            ↓
-      install / remove
-            ↓
-    installed software
-```
-
-Important distinction:
-
-```text
-apt update
-→ refreshes local package information
-
-apt list --upgradable
-→ compares installed packages with local catalog
-
-apt upgrade
-→ actually changes installed packages
-```
-
-## Repository configuration
-
-Observed:
-
-```text
-/etc/apt/sources.list.d/ubuntu.sources
-```
-
-Repositories include:
-
-```text
-http://nl.archive.ubuntu.com/ubuntu/
-http://security.ubuntu.com/ubuntu/
-```
-
-Ubuntu release:
-
-```text
-noble = Ubuntu 24.04 LTS
-```
-
-Important distinction:
-
-```text
-URI
-→ where repository data comes from
-
-Signed-By
-→ key used to verify repository metadata
-```
-
-Repository signing/security will be covered later.
-
----
-
-# 2. Permissions transfer exercise
-
-Running:
+Before installation we verified that k3s was not already installed as a normal service.
 
 ```bash
-apt update
-```
-
-without sudo produced:
-
-```text
-Could not open lock file /var/lib/apt/lists/lock
-Permission denied
-```
-
-Investigated:
-
-```bash
-ls -ld /var/lib/apt/lists/
+dpkg -l k3s
 ```
 
 Result:
 
 ```text
-drwxr-xr-x root root
+dpkg-query: no packages found matching k3s
 ```
 
-Needed to determine which permission category user `mau` belongs to.
-
-Discovered:
+And:
 
 ```bash
-id mau
+systemctl status k3s
 ```
 
 Result:
 
 ```text
-uid=1000(mau)
-gid=1000(mau)
-groups=1000(mau),4(adm),24(cdrom),27(sudo),30(dip),46(plugdev),101(lxd)
+Unit k3s.service could not be found.
 ```
 
-Conclusion:
+We used the official k3s documentation as the primary source.
 
-```text
-directory owner = root
-directory group = root
-
-mau ≠ root user
-mau ∉ root group
-
-→ mau falls under "others"
-→ others has r-x
-→ no write permission
-→ apt cannot modify /var/lib/apt/lists/
-```
-
-Using:
+Official installation command:
 
 ```bash
-sudo apt update
+curl -sfL https://get.k3s.io | sh -
 ```
 
-worked because APT was then executed with elevated privileges.
+Before executing it, the command was inspected conceptually:
 
-This was transfer evidence for:
+```text
+curl
+  ↓
+downloads installation script
+  ↓
+|
+  ↓
+sh -
+  ↓
+executes downloaded script
+```
 
-- UID/GID
-- groups
-- owner/group/others
-- rwx
-- sudo
-- least privilege
+Security lesson:
 
-Not yet sufficient for 🟢 because ≥48h retention evidence is still required.
+`curl ... | sh` means downloaded code is executed directly.
+
+Therefore the script was first inspected without piping it into `sh`:
+
+```bash
+curl -sfL https://get.k3s.io
+```
+
+After confirming that the response was a shell installation script, k3s was installed.
+
+Installed release:
+
+```text
+v1.36.4+k3s1
+```
+
+Installer created among other things:
+
+```text
+/usr/local/bin/k3s
+/usr/local/bin/kubectl
+/usr/local/bin/crictl
+/usr/local/bin/ctr
+
+/etc/systemd/system/k3s.service
+/etc/systemd/system/k3s.service.env
+```
+
+The k3s systemd service was enabled and started.
 
 ---
 
-# 3. Package lifecycle practical lab
-
-Used `cowsay` as a safe test package.
-
-Initial verification:
+# 2. Verify k3s Linux Service
 
 ```bash
-apt list --installed cowsay
+systemctl status k3s
 ```
 
-No package returned.
-
-Installed:
-
-```bash
-sudo apt install cowsay
-```
-
-Observed lifecycle:
+Important evidence:
 
 ```text
-Get
- ↓
-Selecting
- ↓
-Unpacking
- ↓
-Setting up
+Loaded: loaded
+Active: active (running)
+Main PID: 22944 (k3s-server)
 ```
 
-Verified:
-
-```bash
-apt list --installed cowsay
-```
-
-Result:
+Processes visible underneath the service included:
 
 ```text
-cowsay/noble,now 3.03+dfsg2-8 all [installed]
-```
-
-Removed:
-
-```bash
-sudo apt remove cowsay
-```
-
-APT reported:
-
-```text
-1 to remove
-93.2 kB disk space will be freed
-```
-
-Verified removal:
-
-```bash
-apt list --installed cowsay
-```
-
-No package returned.
-
-## Manual vs automatic packages
-
-Observed earlier:
-
-```text
-curl [installed,automatic]
-cowsay [installed]
+k3s-server
+containerd
+containerd-shim-runc-v2
 ```
 
 Mental model:
 
 ```text
-manual
-→ explicitly requested package
-
-automatic
-→ installed because another package needed it as a dependency
+systemd
+  ↓
+k3s.service
+  ↓
+k3s-server
+  ↓
+containerd
+  ↓
+containers
 ```
 
-APT can therefore later recognize dependencies that may no longer be required.
+Important distinction:
+
+```text
+systemctl status k3s
+        ↓
+proves the Linux service/process is running
+
+kubectl
+        ↓
+is needed to verify Kubernetes itself
+```
+
+An active k3s Linux service does NOT automatically prove that the Kubernetes node is healthy.
 
 ---
 
-# 4. Linux troubleshooting mini-boss
+# 3. Kubernetes Node Verification
 
-Scenario:
+Detailed inspection:
 
-```text
-ssh: connect to host 192.168.0.10 port 22:
-Connection refused
+```bash
+sudo kubectl describe node
 ```
 
-Goal was to troubleshoot conceptually instead of trying random commands.
-
-Investigation route developed:
+Node:
 
 ```text
-Laptop
+Name:       homeserver
+Role:       control-plane
+InternalIP: 192.168.0.10
+```
+
+Important condition:
+
+```text
+Ready: True
+Reason: KubeletReady
+```
+
+Container runtime:
+
+```text
+containerd://2.3.4-k3s1.36
+```
+
+Kubernetes/k3s version:
+
+```text
+v1.36.4+k3s1
+```
+
+Compact verification:
+
+```bash
+sudo kubectl get nodes
+```
+
+Evidence:
+
+```text
+NAME         STATUS   ROLES           VERSION
+homeserver   Ready    control-plane   v1.36.4+k3s1
+```
+
+Mental model:
+
+```text
+Physical homeserver
+        ↓
+Ubuntu Linux
+        ↓
+systemd
+        ↓
+k3s.service
+        ↓
+k3s-server
+        ↓
+Kubernetes cluster
+        ↓
+Node: homeserver
+        ↓
+Ready
+```
+
+---
+
+# 4. Kubernetes Components Already Present
+
+The k3s installation automatically created several Kubernetes workloads.
+
+Observed examples:
+
+```text
+coredns
+local-path-provisioner
+metrics-server
+traefik
+svclb-traefik
+```
+
+k3s therefore provides more than the Kubernetes binary itself. It installs a usable Kubernetes distribution with several integrated platform components.
+
+Traefik is already present and will become relevant when Ingress is introduced.
+
+---
+
+# 5. Pod Mental Model
+
+A Pod is the smallest deployable unit managed by Kubernetes.
+
+```text
+Pod
+ └── Container
+      └── Application
+```
+
+A Pod is NOT the same thing as a container.
+
+A Pod can contain multiple containers, although the current workload uses one container per Pod.
+
+---
+
+# 6. Deployment Mental Model
+
+Instead of creating a standalone Pod, a Deployment was used.
+
+A Deployment represents desired state for an application workload.
+
+```text
+Deployment
+    ↓
+ReplicaSet
+    ↓
+Pod
+    ↓
+Container
+```
+
+Example desired state:
+
+```text
+replicas = 1
+image    = nginx
+```
+
+Important correction learned:
+
+```text
+replicas: 3
+```
+
+means:
+
+```text
+Pod 1
+ └── nginx container
+
+Pod 2
+ └── nginx container
+
+Pod 3
+ └── nginx container
+```
+
+It does NOT mean three containers inside one Pod.
+
+---
+
+# 7. Mini-Boss 2 — First Deployment
+
+Support mode:
+
+```text
+A — Independent
+```
+
+Assignment:
+
+Create an nginx Deployment.
+
+Acceptance criteria:
+
+```text
+Deployment: web
+Desired replicas: 1
+Container image: nginx
+Pod: Running
+Deployment: available/healthy
+```
+
+Pod evidence:
+
+```bash
+kubectl get pods
+```
+
+Result:
+
+```text
+NAME                   READY   STATUS    RESTARTS
+web-6c5f67b5f7-q9fx7   1/1     Running   0
+```
+
+Detailed evidence:
+
+```bash
+kubectl describe pod web-6c5f67b5f7-q9fx7
+```
+
+Important values:
+
+```text
+Namespace: web
+Status: Running
+IP: 10.42.0.9
+Controlled By: ReplicaSet/web-6c5f67b5f7
+
+Container:
+nginx
+
+Image:
+nginx:1.14.2
+
+Port:
+80/TCP
+
+Ready:
+True
+```
+
+Deployment evidence:
+
+```bash
+kubectl get deployments
+```
+
+Result:
+
+```text
+NAME   READY   UP-TO-DATE   AVAILABLE
+web    1/1     1            1
+```
+
+Result:
+
+**Mini-Boss 2 PASSED independently.**
+
+---
+
+# 8. Namespace Decision
+
+A separate namespace was created:
+
+```text
+web
+```
+
+The namespace was set as current context rather than placing the workload in `default`.
+
+Reason:
+
+Keep application resources organized and avoid unnecessarily filling the default namespace.
+
+This was an independent design decision outside the minimum assignment requirements.
+
+---
+
+# 9. Mini-Boss 3 — Reconciliation
+
+Goal:
+
+Prove Kubernetes desired-state reconciliation instead of merely reading about it.
+
+Initial Pod:
+
+```text
+web-6c5f67b5f7-q9fx7
+```
+
+The Pod was deliberately deleted:
+
+```bash
+kubectl delete pod web-6c5f67b5f7-q9fx7
+```
+
+Immediately afterwards:
+
+```bash
+kubectl get pods
+```
+
+Result:
+
+```text
+NAME                   READY   STATUS
+web-6c5f67b5f7-sxhgl   1/1     Running
+```
+
+Old Pod:
+
+```text
+web-6c5f67b5f7-q9fx7
+```
+
+New Pod:
+
+```text
+web-6c5f67b5f7-sxhgl
+```
+
+This proved:
+
+```text
+Desired replicas = 1
+
+Pod deleted
+    ↓
+Actual replicas = 0
+    ↓
+ReplicaSet controller detects drift
+    ↓
+New Pod created
+    ↓
+Actual replicas = 1
+```
+
+The ReplicaSet is directly responsible for maintaining the requested number of Pods.
+
+The Deployment manages the ReplicaSet.
+
+Result:
+
+**Mini-Boss 3 PASSED independently.**
+
+---
+
+# 10. Desired State and Reconciliation
+
+Current understanding in own words:
+
+If a certain state of the Pods is desired, the Deployment/controller structure ensures that Kubernetes keeps moving the actual state back toward the desired state.
+
+```text
+DESIRED STATE
+      ↓
+controller observes
+      ↓
+ACTUAL STATE
+      ↓
+difference/drift?
+      ↓
+reconcile
+      ↓
+DESIRED ≈ ACTUAL
+```
+
+This concept has now been:
+
+- explained
+- built
+- deliberately broken
+- observed
+- independently tested
+
+This is strong evidence, but NOT yet sufficient for 🟢 because retention and transfer still need to be demonstrated later.
+
+---
+
+# 11. Why Pod IP Is Not the Application Interface
+
+After reconciliation, the replacement Pod received:
+
+```text
+10.42.0.10
+```
+
+The earlier Pod had:
+
+```text
+10.42.0.9
+```
+
+Important lesson:
+
+**Pods are ephemeral.**
+
+Therefore an application should not depend directly on one specific Pod IP.
+
+```text
+Client
   ↓
-Network reachability
+10.42.0.9
   ↓
-Server
+Pod disappears
   ↓
+address is no longer a stable application endpoint
+```
+
+Solution:
+
+Use a Kubernetes Service.
+
+---
+
+# 12. Service Mental Model
+
+A Service provides a stable abstraction in front of Pods.
+
+```text
+Service
+   ↓
+selector
+   ↓
+Pods with matching labels
+```
+
+Current selector:
+
+```text
+app=nginx
+```
+
+Pod label:
+
+```text
+app=nginx
+```
+
+This allows the Service to find replacement Pods without depending on Pod names or Pod IPs.
+
+With multiple replicas:
+
+```text
+             Service
+                │
+      ┌─────────┼─────────┐
+      ↓         ↓         ↓
+    Pod 1     Pod 2     Pod 3
+ app=nginx  app=nginx  app=nginx
+```
+
+---
+
+# 13. Mini-Boss 4 — ClusterIP Service
+
+Support mode:
+
+```text
+A — Independent
+```
+
+Initial Service was created as:
+
+```text
+my-web-service
+```
+
+Evidence:
+
+```text
+TYPE:       ClusterIP
+ClusterIP:  10.43.79.182
+Port:       80
+Selector:   app=nginx
+TargetPort: 80
+Endpoint:   10.42.0.10:80
+```
+
+Pod evidence:
+
+```text
+Pod IP: 10.42.0.10
+Port:   80/TCP
+```
+
+This proved:
+
+```text
 Service
   ↓
-Process
+10.42.0.10:80
   ↓
-Listening socket
-  ↓
-Firewall
-  ↓
-Authentication / application
+nginx Pod
 ```
 
-## Network reachability
-
-First hypothesis:
+However, the assignment required:
 
 ```text
-Can the laptop reach the homeserver?
+Service name: web
 ```
 
-Use ping.
+The initial name:
 
-If ping succeeds, basic IP reachability exists and investigation moves higher in the stack.
+```text
+my-web-service
+```
 
-## SSH service
+did not satisfy the acceptance criteria.
 
-Investigated:
+Important engineering distinction:
+
+```text
+"it works"
+        ≠
+"it satisfies the requirements"
+```
+
+The Service was corrected declaratively using:
 
 ```bash
-systemctl status ssh
+kubectl apply -f service.yaml
 ```
 
-Evidence:
+Final manifest:
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: web
+spec:
+  selector:
+    app: nginx
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 80
+```
+
+Because no explicit Service type was configured, Kubernetes used the default:
 
 ```text
-ssh.service - OpenBSD Secure Shell server
-Active: active (running)
-Main PID: 1088 (sshd)
-```
-
-Connected model:
-
-```text
-systemd
-   ↓ manages
-ssh.service
-   ↓ manages/starts
-sshd
-   ↓
-process PID 1088
-```
-
-## Listening socket
-
-Investigated:
-
-```bash
-ss -tln
-```
-
-Evidence:
-
-```text
-0.0.0.0:22 LISTEN
-[::]:22      LISTEN
-```
-
-Meaning:
-
-```text
-0.0.0.0:22
-→ listen on TCP port 22 on all local IPv4 interfaces
-
-[::]:22
-→ IPv6 equivalent
-```
-
-Also observed:
-
-```bash
-ss -tl
-```
-
-shows:
-
-```text
-:ssh
-```
-
-while:
-
-```bash
-ss -tln
-```
-
-shows:
-
-```text
-:22
-```
-
-`-n` prevents service-name translation and shows numeric ports.
-
-## Client configuration
-
-Investigated:
-
-```bash
-ssh -G server
-```
-
-Evidence:
-
-```text
-user mau
-hostname 192.168.0.10
-port 22
-```
-
-Therefore the client configuration targets:
-
-```text
-mau@192.168.0.10:22
-```
-
----
-
-# 5. Firewall — missing prerequisite discovered
-
-The mini-boss exposed a missing connection in the Linux mental model.
-
-Previously:
-
-```text
-client
- ↓
-network
- ↓
-socket
- ↓
-service
-```
-
-Improved model:
-
-```text
-client
- ↓
-network
- ↓
-firewall
- ↓
-socket / port
- ↓
-service
- ↓
-process
-```
-
-Important distinction:
-
-```text
-ss
-→ Is something listening on this port?
-
-firewall
-→ Is network traffic allowed to reach it?
-```
-
-Investigated UFW:
-
-```bash
-sudo ufw status verbose
+ClusterIP
 ```
 
 Result:
 
-```text
-Status: inactive
-```
-
-Therefore UFW currently does not enforce firewall rules on the homeserver.
-
-Important security lesson:
-
-Do not blindly enable a firewall on a remotely administered server.
-
-If incoming traffic defaults to DENY and SSH is not allowed first:
-
-```text
-Laptop
-  ↓
-SSH :22
-  ↓
-FIREWALL
-  ✕
-  ↓
-sshd
-```
-
-the administrator can lock themselves out.
-
-Firewall concept is now connected but not independently proven.
+**Mini-Boss 4 PASSED independently.**
 
 ---
 
-# 6. Linux filesystem layout
+# 14. Kubernetes Network Model Observed
 
-Started building a filesystem search map.
-
-Root filesystem:
+Current addresses:
 
 ```text
-/
-├── etc
-├── home
-├── usr
-├── var
-├── run
-├── tmp
-├── boot
-└── ...
+LAN / physical network
+192.168.0.x
+
+Homeserver / Node
+192.168.0.10
+
+Kubernetes Pod network
+10.42.x.x
+
+Kubernetes Service network
+10.43.x.x
 ```
 
-Current useful mental labels:
+The laptop has a route to:
 
 ```text
-/etc
-→ system-wide configuration
-
-/home
-→ personal files/environment of normal users
-
-/var
-→ changing system/application data
-
-/usr
-→ installed programs, libraries and related files
-
-/run
-→ runtime information for the current boot
+192.168.0.10
 ```
 
-Only `/etc`, `/home`, `/var` and the beginning of `/usr` were explored today.
+but not automatically to the Kubernetes internal Pod and Service networks.
+
+Therefore the ClusterIP cannot simply be used as the external application address from the laptop.
 
 ---
 
-# 7. /etc
+# 15. NodePort Mental Model
 
-Previously observed:
+Problem:
 
-```text
-/etc/netplan/
-/etc/apt/
-/etc/passwd
-/etc/group
-/etc/shadow
-/etc/sudoers
-```
+Expose the Service outside the Kubernetes internal network.
 
-Mental label:
+Solution introduced:
 
 ```text
-/etc
-→ system-wide configuration
-```
-
-Search principle:
-
-```text
-"How is this Linux system configured?"
-              ↓
-            /etc
-```
-
----
-
-# 8. /home
-
-For user `mau`:
-
-```text
-/home/mau
-```
-
-Contains the personal environment/files/directories of the user.
-
-Special case:
-
-```text
-root user's home
-→ /root
-```
-
-not:
-
-```text
-/home/root
-```
-
----
-
-# 9. /var and logs
-
-Observed:
-
-```text
-/var
-├── backups
-├── cache
-├── crash
-├── lib
-├── log
-├── mail
-├── spool
-└── tmp
+NodePort
 ```
 
 Mental model:
 
 ```text
-/var
-→ variable/changing data produced during system operation
+Laptop
+   ↓
+Node IP : NodePort
+   ↓
+Kubernetes Service
+   ↓
+Pod
+   ↓
+Application
 ```
 
-Observed:
+Important distinction:
 
 ```text
-/var/log
-├── apt
-├── auth.log
-├── dpkg.log
-├── journal
-├── kern.log
-└── syslog
+Node IP
+192.168.0.10
 ```
 
-Used filesystem structure as a search strategy:
+is reachable from the laptop.
 
-```text
-Question:
-"What did APT do?"
-       ↓
-Need historical information
-       ↓
-logs
-       ↓
-/var/log
-       ↓
-APT
-       ↓
-/var/log/apt
-```
+The NodePort provides an entry point on the node.
 
-Observed:
-
-```text
-/var/log/apt/
-├── history.log
-├── term.log
-└── eipp.log.xz
-```
-
-`history.log` contained evidence from today's package lab:
-
-```text
-Start-Date: 2026-09-23 08:52:19
-Commandline: apt install cowsay
-Requested-By: mau (1000)
-Install: cowsay:amd64 (3.03+dfsg2-8)
-
-Start-Date: 2026-09-23 08:56:26
-Commandline: apt remove cowsay
-Requested-By: mau (1000)
-Remove: cowsay:amd64 (3.03+dfsg2-8)
-```
-
-This connected:
-
-```text
-filesystem
-   +
-logs
-   +
-APT
-   +
-user identity
-   +
-UID 1000
-```
+The Service then routes traffic to matching Pods.
 
 ---
 
-# 10. /usr and command discovery
+# 16. Mini-Boss 5 — External Reachability
 
-Investigated where `ls` exists:
+The existing Service `web` was changed to:
+
+```text
+Type: NodePort
+```
+
+Evidence:
 
 ```bash
-whereis ls
+kubectl get svc -n web
 ```
 
 Result:
 
 ```text
-ls: /usr/bin/ls /usr/share/man/man1/ls.1.gz
+NAME   TYPE       CLUSTER-IP    PORT(S)
+web    NodePort   10.43.33.30   80:30008/TCP
 ```
-
-Meaning:
-
-```text
-/usr/bin/ls
-→ executable program
-
-/usr/share/man/man1/ls.1.gz
-→ manual/documentation
-```
-
-This introduced the question:
-
-```text
-Why can the user type:
-
-ls
-
-instead of:
-
-/usr/bin/ls
-```
-
----
-
-# 11. PATH — CURRENT LEARNING EDGE
-
-Found Bash documentation:
-
-```text
-PATH
-The search path for commands.
-```
-
-PATH is a colon-separated list of directories.
-
-Observed current PATH:
-
-```bash
-echo $PATH
-```
-
-Result:
-
-```text
-/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin
-```
-
-Initial mental model:
-
-```text
-command: ls
-   ↓
-Bash
-   ↓
-PATH
-   ↓
-search directories
-   ↓
-/usr/bin
-   ↓
-/usr/bin/ls
-```
-
-However this concept is NOT yet sufficiently connected.
-
-The important conceptual problem discovered:
-
-Previous programming experience created this question:
-
-> "If a variable exists, where was it originally defined?"
-
-Current distinction being developed:
-
-```text
-ON SSD                         DURING EXECUTION / RAM
-
-configuration/code      →      process environment
-                                  │
-                                  └── PATH=...
-```
-
-Analogy with Python:
-
-```text
-app.py on SSD
-naam = "Maurice"
-      ↓
-Python starts
-      ↓
-Python process in RAM
-      ↓
-variable exists during execution
-```
-
-For Linux/Bash we need to understand:
-
-```text
-Fresh PC
-  ↓
-Ubuntu installation
-  ↓
-configuration/files on SSD
-  ↓
-boot
-  ↓
-kernel
-  ↓
-systemd
-  ↓
-login
-  ↓
-Bash starts
-  ↓
-environment is constructed
-  ↓
-PATH exists for the running shell/process
-```
-
-This connection is NOT finished.
-
----
-
-# Exact stopping point
-
-Do NOT continue directly with more PATH syntax.
-
-Next session starts with the conceptual question:
-
-> **Where does the PATH value originally come from on disk/configuration when a fresh Ubuntu system boots and user `mau` logs in?**
-
-Build the connection:
-
-```text
-SSD/configuration
-      ↓
-boot/login
-      ↓
-Bash process
-      ↓
-environment
-      ↓
-PATH
-      ↓
-command lookup
-      ↓
-/usr/bin/ls
-```
-
-Use the real homeserver to investigate this chain.
-
-After PATH:
-
-1. finish `/usr`
-2. `/run`
-3. boot process
-4. DNS/resolution connection
-5. Linux Foundation mini-boss / assessment
-6. return to Project 1
-7. install/build k3s
-8. first Kubernetes workload
-
----
-
-# Evidence collected today
-
-Practical evidence:
-
-- `apt update` permission failure investigated
-- `id mau`
-- permissions on `/var/lib/apt/lists`
-- successful `sudo apt update`
-- APT repository configuration inspected
-- package versions inspected
-- `cowsay` installed
-- installation verified
-- `cowsay` removed
-- removal verified
-- APT history verified in `/var/log/apt/history.log`
-- `systemctl status ssh`
-- `ss -tl`
-- `ss -tln`
-- `ssh -G server`
-- `sudo ufw status verbose`
-- Linux filesystem root inspected
-- `/var` inspected
-- `/var/log` inspected
-- `/var/log/apt` inspected
-- `/usr/bin/ls` discovered
-- current `$PATH` inspected
-
----
-
-# Skill observations — 2026-09-23
-
-## Stronger evidence today
-
-### Linux troubleshooting
-
-Demonstrated ability to move through:
-
-```text
-network
-→ service
-→ process
-→ socket
-```
-
-Firewall was not spontaneously recognized because this prerequisite had not yet been connected.
-
-### Users & Permissions
-
-Previous knowledge was successfully reused in a new APT permission problem.
-
-This is transfer evidence, but it occurred less than 48 hours after the original learning session.
 
 Therefore:
 
-**NO promotion to 🟢 yet.**
-
-Earliest retention test remains:
-
-**2026-09-24**
-
-### Software / Packages
-
-Package-management mental model and practical lifecycle completed under guidance.
-
-Current status:
-
-🟡 2 — Begeleid
-
-### Firewall
-
-Concept now recognized and connected to network troubleshooting.
-
-Current evidence:
-
-🟠/🟡 transition — not independently demonstrated yet.
-
-### Filesystem layout
-
-Beginning to use filesystem structure as a search strategy instead of memorizing paths.
-
-Current status:
-
-🟡 2 — Begeleid
-
-### PATH / environment
-
-Concept currently incomplete.
-
-Do not score as independently understood.
-
----
-
-# Skill Passport
-
-No level promotion today.
-
-Important rule:
-
 ```text
-Seeing ≠ knowing
-Using once ≠ independent mastery
+Service port: 80
+NodePort:     30008
 ```
 
-🟢 requires:
+Server-side test:
 
-- criteria completed
-- independently reproduced/applied
-- applied in another practical situation
-- reproduced after ≥48 hours
-- explanation of why it works
+```bash
+curl -I http://localhost:30008
+```
+
+Result:
+
+```text
+HTTP/1.1 200 OK
+Server: nginx/1.14.2
+```
+
+This proved:
+
+```text
+NodePort
+   ↓
+Service
+   ↓
+Pod
+   ↓
+nginx
+```
+
+was functioning on the node.
 
 ---
 
-# DAILY SKILL PROGRESS — 23-09-2026
+# 17. Troubleshooting External Access
+
+Initially the application appeared unreachable from the laptop.
+
+Troubleshooting was performed layer by layer.
+
+First:
 
 ```text
-╔════════════════════ DAILY SKILL PROGRESS — 23-09-2026 ════════════════════╗
+Laptop → ping → 192.168.0.10
+```
 
-                                      LEVEL
- 1  Git / Repository / Governance     🟡 2
- 2  Linux                             🟡 2
- 3  Server Foundation                 🟡 2
- 4  Network / DNS / Ingress           🟡 2
- 5  Kubernetes Platform               🟡 2
- 6  Storage                           🟡 2
- 7  Secrets                           🔴 0
- 8  CI/CD                             🟠 1
- 9  GitOps                            🟠 1
-10  Observability                     🟠 1
-11  Security                          🟡 2
-12  Developer Platform / Self-Service 🟠 1
-13  Reliability / Backup / DR         🟠 1
-14  Cloud Platform                    🔴 0
-15  Hybrid / Multi-environment        🔴 0
-16  Chaos / Incident Response         🟠 1
-17  Employer Portfolio / Assessment   🟠 1
-18  Final Zero-to-Production Rebuild  🔴 0
+worked.
 
-TODAY'S EVIDENCE
+This proved IP-level reachability to the homeserver.
 
-Linux
-  ▲ package management lifecycle
-  ▲ troubleshooting across multiple layers
-  ▲ filesystem search strategy
-  ▲ /etc /home /var /usr connections
+However:
 
-Security
-  ▲ sudo/permissions transfer
-  ▲ firewall introduced
-  ▲ least-privilege reasoning reinforced
+```text
+ping
+```
 
-Troubleshooting
-  ▲ ping → service → process → socket
-  ▲ hypotheses eliminated using evidence
-  ▲ missing firewall prerequisite identified
+does NOT prove that TCP port `30008` works.
 
-RETENTION
+A direct HTTP test was then performed from the laptop:
 
-Users & Permissions:
-next eligible independent retention evidence ≥ 24-09-2026
+```bash
+curl -I http://192.168.0.10:30008
+```
+
+Result:
+
+```text
+HTTP/1.1 200 OK
+Server: nginx/1.14.2
+```
+
+This proved end-to-end HTTP connectivity from the laptop through Kubernetes to nginx.
+
+The browser still appeared broken.
+
+Evidence comparison found that the browser was using:
+
+```text
+192.168.0.10:3000
+```
+
+instead of:
+
+```text
+192.168.0.10:30008
+```
+
+After using:
+
+```text
+http://192.168.0.10:30008
+```
+
+the nginx page loaded successfully.
+
+Troubleshooting lesson:
+
+Do not change the platform immediately when one client appears broken.
+
+Compare evidence between layers first.
+
+```text
+Browser :3000    → failed
+curl    :30008   → HTTP 200
+```
+
+The problem was the client request using the wrong port, not Kubernetes.
+
+Result:
+
+**Mini-Boss 5 PASSED.**
+
+Support:
+
+Mostly independent, with one small hint during TCP/HTTP testing.
+
+---
+
+# 18. Current End-to-End Architecture
+
+The following chain is now WORKING and VERIFIED:
+
+```text
+Laptop / Brave
+192.168.0.x
+       │
+       │ HTTP
+       ▼
+192.168.0.10:30008
+       │
+       ▼
+Kubernetes NodePort
+       │
+       ▼
+Service: web
+ClusterIP: 10.43.33.30
+Port: 80
+Selector: app=nginx
+       │
+       ▼
+Pod
+10.42.0.10:80
+       │
+       ▼
+nginx container
+       │
+       ▼
+HTTP 200 OK
+```
+
+Controller chain:
+
+```text
+Deployment
+    ↓
+ReplicaSet
+    ↓
+Pod
+    ↓
+Container
+```
+
+Network chain:
+
+```text
+Laptop
+    ↓
+Node IP
+    ↓
+NodePort
+    ↓
+Service
+    ↓
+Pod IP
+    ↓
+Container port
+```
+
+---
+
+# 19. Important Concepts Practiced Today
+
+## Linux / Platform boundary
+
+```text
+systemd
+   ↓
+k3s.service
+   ↓
+k3s-server
+   ↓
+Kubernetes
+```
+
+## Kubernetes health
+
+```text
+k3s active
+```
+
+does not automatically mean:
+
+```text
+Node Ready
+```
+
+Health must be checked at the correct layer.
+
+## Desired state
+
+Kubernetes controllers continuously compare desired state with actual state.
+
+## Reconciliation
+
+Deleting a managed Pod caused Kubernetes to automatically create a replacement.
+
+## Ephemeral Pods
+
+Pod identity and Pod IP should not be treated as stable application endpoints.
+
+## Labels and selectors
+
+Services discover Pods through labels/selectors.
+
+## Service
+
+Provides a stable abstraction in front of changing Pods.
+
+## ClusterIP
+
+Internal Kubernetes Service address.
+
+## NodePort
+
+Makes a Service reachable through a port on a Kubernetes node.
+
+## Evidence-driven troubleshooting
+
+Test each layer independently before changing configuration.
+
+---
+
+# 20. Evidence Produced Today
+
+- Official k3s installation source used.
+- k3s install script inspected before execution.
+- k3s installed on clean Ubuntu Server.
+- k3s systemd service verified.
+- Kubernetes node verified Ready.
+- First Deployment built independently.
+- Deployment health verified.
+- Pod inspected.
+- Namespace `web` used.
+- Pod deliberately deleted.
+- Kubernetes reconciliation independently demonstrated.
+- ClusterIP Service created.
+- Service selector → Pod endpoint relationship verified.
+- Service requirement mismatch detected and corrected.
+- Service manifest created declaratively.
+- NodePort configured.
+- nginx tested locally through NodePort.
+- laptop → homeserver connectivity tested.
+- laptop → NodePort → Service → Pod → nginx tested with curl.
+- browser access verified.
+- incorrect browser port diagnosed through evidence comparison.
+
+---
+
+# 21. Skill Evidence Status
+
+No skill is promoted to 🟢 solely because today's work succeeded.
+
+Promotion to 🟢 still requires:
+
+- independent evidence
+- reproduction in another practical context
+- retention evidence at least 48 hours later
+- explanation of why it works
+
+Today's Kubernetes work provides strong independent evidence that can later be used toward promotion.
+
+| Skill | Level |
+|---|---|
+| Git / Repository / Governance | 🟡 2 |
+| Linux | 🟡 2 |
+| Server Foundation | 🟡 2 |
+| Network / DNS / Ingress | 🟡 2 |
+| Kubernetes Platform | 🟡 2 |
+| Storage | 🟡 2 |
+| Secrets | 🔴 0 |
+| CI/CD | 🟠 1 |
+| GitOps | 🟠 1 |
+| Observability | 🟠 1 |
+| Security | 🟡 2 |
+| Developer Platform / Self-Service | 🟠 1 |
+| Reliability / Backup / DR | 🟠 1 |
+| Cloud Platform | 🔴 0 |
+| Hybrid / Multi-environment | 🔴 0 |
+| Chaos / Incident Response | 🟠 1 |
+| Employer Portfolio / Assessment | 🟠 1 |
+| Final Zero-to-Production Rebuild | 🔴 0 |
+
+---
+
+# 22. Next Architecture Problem
+
+NodePort works:
+
+```text
+http://192.168.0.10:30008
+```
+
+But this is not how applications should ultimately be exposed.
+
+Target:
+
+```text
+http://web.home.arpa
+```
+
+Future architecture:
+
+```text
+Browser
+   │
+   │ web.home.arpa
+   ▼
+DNS
+   │
+   │ name → IP
+   ▼
+192.168.0.10:80
+   │
+   ▼
+Ingress Controller
+Traefik
+   │
+   │ host/path routing
+   ▼
+Service: web
+   │
+   ▼
+Pod
+   │
+   ▼
+nginx
+```
+
+Important distinction:
+
+```text
+DNS
+name → IP address
+
+Ingress
+HTTP request → correct Kubernetes Service
+```
+
+k3s already installed Traefik, so an Ingress Controller appears to already exist.
+
+This must still be investigated and verified rather than assumed.
+
+---
+
+# EXACT STOPPING POINT
+
+The last question before stopping was:
+
+> If `web.home.arpa` is entered into the browser, what must happen first before the request can reach Traefik?
+
+Resume here next session.
+
+Do NOT give the answer first.
+
+Let Maurice reason from the current network chain.
+
+---
+
+# Next Session
+
+Continue with:
+
+```text
+DNS
+ ↓
+Ingress / Traefik
+ ↓
+Service
+ ↓
+Pod
+```
+
+Likely build target:
+
+```text
+web.home.arpa
+      ↓
+192.168.0.10
+      ↓
+Traefik :80
+      ↓
+Ingress rule
+      ↓
+Service web :80
+      ↓
+nginx Pod
+```
+
+Keep build-first approach.
+
+Do not introduce unnecessary production complexity yet.
+
+---
+
+# DAILY SKILL PROGRESS — 24-09-2026
+
+No percentages are assigned yet because objective percentage criteria have not yet been defined.
+
+```text
+╔════════════════════ DAILY SKILL PROGRESS — 24-09-2026 ════════════════════╗
+
+                                      LEVEL       TODAY
+ 1  Git / Repository / Governance     🟡 2         —
+ 2  Linux                              🟡 2         ▲
+ 3  Server Foundation                  🟡 2         ▲
+ 4  Network / DNS / Ingress            🟡 2         ▲
+ 5  Kubernetes Platform                🟡 2         ▲▲
+ 6  Storage                            🟡 2         —
+ 7  Secrets                            🔴 0         —
+ 8  CI/CD                              🟠 1         —
+ 9  GitOps                             🟠 1         —
+10  Observability                      🟠 1         —
+11  Security                           🟡 2         ▲
+12  Developer Platform / Self-Service  🟠 1         —
+13  Reliability / Backup / DR          🟠 1         ▲
+14  Cloud Platform                     🔴 0         —
+15  Hybrid / Multi-environment         🔴 0         —
+16  Chaos / Incident Response          🟠 1         ▲
+17  Employer Portfolio / Assessment    🟠 1         ▲
+18  Final Zero-to-Production Rebuild   🔴 0         —
+
+TODAY'S STRONGEST EVIDENCE
+
+Kubernetes:
+  Deployment → ReplicaSet → Pod → Container        ✓
+  Desired state / reconciliation                   ✓
+  Service selector → Pod                           ✓
+  ClusterIP                                        ✓
+  NodePort                                         ✓
+  End-to-end browser access                        ✓
+
+Troubleshooting:
+  layer-by-layer investigation                     ✓
+  ping vs HTTP distinction                         ✓
+  wrong client port identified                     ✓
 
 LEVELS
 🔴 0 Niet bekend    🟠 1 Herkenning    🟡 2 Begeleid
 🟢 3 Zelfstandig    🔵 4 Engineer      🟣 5 Architect
 
-🟢 requires independent evidence + reproduction ≥48h later
+🟢 requires:
+independent evidence
++ transfer to another situation
++ reproduction ≥48h later
++ explanation of why it works
 
-NOTE:
-Percentages intentionally omitted until objective per-skill criteria are defined.
+═══════════════════════════════════════════════════════════════════════════════
+```
 
-╚═════════════════════════════════════════════════════════════════════════════╝
+---
+
+# Session Summary
+
+Today the clean Ubuntu homeserver became a functioning Kubernetes platform.
+
+The most important achievement was not simply installing k3s.
+
+The complete working chain was built, tested, deliberately changed and troubleshot:
+
+```text
+Laptop
+  ↓
+Ubuntu Server
+  ↓
+k3s
+  ↓
+Kubernetes Node
+  ↓
+Deployment
+  ↓
+ReplicaSet
+  ↓
+Pod
+  ↓
+Container
+  ↑
+Service
+  ↑
+NodePort
+  ↑
+Browser
+```
+
+Next step:
+
+```text
+DNS → Ingress → Service → Pod
 ```
