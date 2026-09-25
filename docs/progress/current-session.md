@@ -1,1306 +1,747 @@
-# Current Session — 24-09-2026
+# Current Session — 25-09-2026
 
 ## Project
-Production-Grade Platform Engineering Lab
-
-### Current project
 Project 1 — Mini Platform
 
-### Current phase
-Kubernetes foundation and first workload
+## Topic
+Kubernetes networking → DNS → CoreDNS → ConfigMap → Deployment
+
+## Status
+🟡 IN PROGRESS
 
 ---
 
-# Session Goal
+# 1. STARTPUNT VANDAAG
 
-Continue from the clean Ubuntu Server foundation and build the first working Kubernetes platform.
+De nginx workload werkte al via NodePort:
 
-Target architecture:
-
-```text
 Laptop
   ↓
-Ubuntu Server
+192.168.0.10:30008
   ↓
-k3s
+NodePort Service
   ↓
-Kubernetes
+nginx Pod
+
+Doel van vandaag:
+
+http://web.home.arpa
+
+in plaats van:
+
+http://192.168.0.10:30008
+
+Daarvoor moeten twee verschillende problemen worden opgelost:
+
+1. DNS:
+   web.home.arpa → 192.168.0.10
+
+2. HTTP routing:
+   192.168.0.10:80 → Traefik → Service → Pod
+
+---
+
+# 2. DNS — HUIDIGE SITUATIE ONDERZOCHT
+
+Vanaf laptop:
+
+dig web.home.arpa
+
+Resultaat:
+
+NXDOMAIN
+ANSWER: 0
+SERVER: 127.0.0.53
+
+Onderzocht met:
+
+resolvectl status
+
+Werkelijke DNS-keten:
+
+Laptop
   ↓
-Deployment
+systemd-resolved
+127.0.0.53
   ↓
-ReplicaSet
+192.168.0.1
+router / huidige DNS
   ↓
-Pod
+web.home.arpa onbekend
   ↓
-Container
+NXDOMAIN
+
+Belangrijk begrip:
+
+127.0.0.53 is de lokale systemd-resolved stub.
+192.168.0.1 is momenteel de upstream DNS-server van de laptop.
+
+---
+
+# 3. COREDNS BINNEN KUBERNETES
+
+Bestaande Kubernetes DNS onderzocht:
+
+kube-dns
+Type: ClusterIP
+ClusterIP: 10.43.0.10
+Ports:
+- 53/UDP
+- 53/TCP
+- 9153/TCP
+
+Belangrijk onderscheid:
+
+Kubernetes CoreDNS
+  → interne Kubernetes DNS
+  → bijvoorbeeld cluster.local
+
+Homelab DNS
+  → DNS voor laptop/LAN
+  → bijvoorbeeld web.home.arpa
+
+Architectuurkeuze:
+
+NIET de bestaande Kubernetes CoreDNS uitbreiden/exposen.
+
+Reden:
+separation of concerns + kleinere blast radius.
+
+We bouwen daarom een aparte DNS-workload.
+
+---
+
+# 4. ROUTING NAAR KUBERNETES CLUSTERIP ONDERZOCHT
+
+Laptop:
+
+ip route get 10.43.0.10
+
+Resultaat:
+
+10.43.0.10 via 192.168.0.1
+
+Traceroute:
+
+Laptop
+192.168.0.111
   ↓
-Service
+192.168.0.1
   ↓
+192.168.1.1
+  ↓
+...
+
+Conclusie:
+
+10.43.0.10 is een Kubernetes ClusterIP en is niet rechtstreeks
+LAN-facing.
+
+Belangrijk onderscheid:
+
+ip route get
+  → welke route Linux kiest
+
+traceroute
+  → welke netwerkroute het verkeer daadwerkelijk begint te volgen
+
+---
+
+# 5. SERVICE TYPES VERDIEPT
+
+ClusterIP
+  → intern Kubernetes-adres
+
 NodePort
-  ↓
-Browser
-```
+  → node-IP + hoge poort
+  → bijvoorbeeld 192.168.0.10:30008
+
+LoadBalancer
+  → extern/LAN bereikbaar adres en normale servicepoort
+
+Voor homelab DNS is gekozen:
+
+LoadBalancer
+
+Doel:
+
+192.168.0.10:53 UDP
+192.168.0.10:53 TCP
 
 ---
 
-# 1. k3s Installation
+# 6. K3S LOADBALANCER ONDERZOCHT
 
-Before installation we verified that k3s was not already installed as a normal service.
+Pods in kube-system:
 
-```bash
-dpkg -l k3s
-```
+kubectl get pods -n kube-system
 
-Result:
+Onder andere:
 
-```text
-dpkg-query: no packages found matching k3s
-```
+traefik-...
+svclb-traefik-...
 
-And:
+svclb-traefik onderzocht:
 
-```bash
-systemctl status k3s
-```
+kubectl describe pod svclb-traefik-... -n kube-system
 
-Result:
-
-```text
-Unit k3s.service could not be found.
-```
-
-We used the official k3s documentation as the primary source.
-
-Official installation command:
-
-```bash
-curl -sfL https://get.k3s.io | sh -
-```
-
-Before executing it, the command was inspected conceptually:
-
-```text
-curl
-  ↓
-downloads installation script
-  ↓
-|
-  ↓
-sh -
-  ↓
-executes downloaded script
-```
-
-Security lesson:
-
-`curl ... | sh` means downloaded code is executed directly.
-
-Therefore the script was first inspected without piping it into `sh`:
-
-```bash
-curl -sfL https://get.k3s.io
-```
-
-After confirming that the response was a shell installation script, k3s was installed.
-
-Installed release:
-
-```text
-v1.36.4+k3s1
-```
-
-Installer created among other things:
-
-```text
-/usr/local/bin/k3s
-/usr/local/bin/kubectl
-/usr/local/bin/crictl
-/usr/local/bin/ctr
-
-/etc/systemd/system/k3s.service
-/etc/systemd/system/k3s.service.env
-```
-
-The k3s systemd service was enabled and started.
-
----
-
-# 2. Verify k3s Linux Service
-
-```bash
-systemctl status k3s
-```
-
-Important evidence:
-
-```text
-Loaded: loaded
-Active: active (running)
-Main PID: 22944 (k3s-server)
-```
-
-Processes visible underneath the service included:
-
-```text
-k3s-server
-containerd
-containerd-shim-runc-v2
-```
-
-Mental model:
-
-```text
-systemd
-  ↓
-k3s.service
-  ↓
-k3s-server
-  ↓
-containerd
-  ↓
-containers
-```
-
-Important distinction:
-
-```text
-systemctl status k3s
-        ↓
-proves the Linux service/process is running
-
-kubectl
-        ↓
-is needed to verify Kubernetes itself
-```
-
-An active k3s Linux service does NOT automatically prove that the Kubernetes node is healthy.
-
----
-
-# 3. Kubernetes Node Verification
-
-Detailed inspection:
-
-```bash
-sudo kubectl describe node
-```
+Belangrijke evidence:
 
 Node:
+homeserver/192.168.0.10
 
-```text
-Name:       homeserver
-Role:       control-plane
-InternalIP: 192.168.0.10
-```
+Container lb-tcp-80:
+Port:      80/TCP
+Host Port: 80/TCP
 
-Important condition:
+SRC_PORT: 80
+DEST_PORT: 80
+DEST_IPS: 10.43.58.247
 
-```text
-Ready: True
-Reason: KubeletReady
-```
+Container lb-tcp-443:
+Port:      443/TCP
+Host Port: 443/TCP
 
-Container runtime:
+Traefik Service:
+ClusterIP: 10.43.58.247
 
-```text
-containerd://2.3.4-k3s1.36
-```
+Mentale route:
 
-Kubernetes/k3s version:
+Laptop
+  ↓
+192.168.0.10:80
+  ↓
+k3s ServiceLB / svclb-traefik
+  ↓
+10.43.58.247:80
+  ↓
+Traefik Service
+  ↓
+Traefik Pod
 
-```text
-v1.36.4+k3s1
-```
+Nieuw begrip:
 
-Compact verification:
-
-```bash
-sudo kubectl get nodes
-```
-
-Evidence:
-
-```text
-NAME         STATUS   ROLES           VERSION
-homeserver   Ready    control-plane   v1.36.4+k3s1
-```
-
-Mental model:
-
-```text
-Physical homeserver
-        ↓
-Ubuntu Linux
-        ↓
-systemd
-        ↓
-k3s.service
-        ↓
-k3s-server
-        ↓
-Kubernetes cluster
-        ↓
-Node: homeserver
-        ↓
-Ready
-```
+k3s gebruikt ServiceLB / klipper-lb om een LoadBalancer Service
+op de node beschikbaar te maken.
 
 ---
 
-# 4. Kubernetes Components Already Present
+# 7. POORT 53 ONDERZOCHT
 
-The k3s installation automatically created several Kubernetes workloads.
+Op homeserver:
 
-Observed examples:
+ss -tulpn
 
-```text
-coredns
-local-path-provisioner
-metrics-server
-traefik
-svclb-traefik
-```
+Onder andere:
 
-k3s therefore provides more than the Kubernetes binary itself. It installs a usable Kubernetes distribution with several integrated platform components.
+127.0.0.53:53
+127.0.0.54:53
 
-Traefik is already present and will become relevant when Ingress is introduced.
+systemd-resolved gebruikt dus poort 53 alleen op loopback-adressen.
 
----
+Belangrijk geleerd:
 
-# 5. Pod Mental Model
+0.0.0.0:PORT
+  → luistert op alle IPv4 interfaces
 
-A Pod is the smallest deployable unit managed by Kubernetes.
+127.x.x.x:PORT
+  → loopback / alleen lokaal
 
-```text
-Pod
- └── Container
-      └── Application
-```
+Een poortconflict moet worden bekeken als combinatie van:
 
-A Pod is NOT the same thing as a container.
+IP + protocol + poort
 
-A Pod can contain multiple containers, although the current workload uses one container per Pod.
+Voor DNS:
+
+192.168.0.10:53/UDP
+192.168.0.10:53/TCP
+
+Er is nog geen bewijs van een conflict op deze LAN-combinaties.
 
 ---
 
-# 6. Deployment Mental Model
+# 8. HOMELAB DNS REQUIREMENTS
 
-Instead of creating a standalone Pod, a Deployment was used.
+Nieuwe aparte DNS moet:
 
-A Deployment represents desired state for an application workload.
+1. draaien in Kubernetes
+2. bereikbaar zijn vanaf LAN
+3. bereikbaar zijn op 192.168.0.10:53
+4. UDP 53 ondersteunen
+5. TCP 53 ondersteunen
+6. web.home.arpa → 192.168.0.10 beantwoorden
+7. overige DNS-vragen doorsturen naar upstream DNS
+8. declaratief configureerbaar zijn
+9. later vanuit Git beheerd kunnen worden
 
-```text
-Deployment
-    ↓
-ReplicaSet
-    ↓
-Pod
-    ↓
-Container
-```
+Architectuur:
 
-Example desired state:
-
-```text
-replicas = 1
-image    = nginx
-```
-
-Important correction learned:
-
-```text
-replicas: 3
-```
-
-means:
-
-```text
-Pod 1
- └── nginx container
-
-Pod 2
- └── nginx container
-
-Pod 3
- └── nginx container
-```
-
-It does NOT mean three containers inside one Pod.
+Laptop
+  │
+  │ DNS :53
+  ▼
+192.168.0.10
+  │
+  ▼
+LoadBalancer Service
+  │
+  ▼
+aparte CoreDNS Pod
+  │
+  ├── hosts
+  │    web.home.arpa → 192.168.0.10
+  │
+  └── forward
+       overige DNS → 192.168.0.1
 
 ---
 
-# 7. Mini-Boss 2 — First Deployment
+# 9. COREDNS PLUGINS
 
-Support mode:
+Uit documentatie onderzocht.
 
-```text
-A — Independent
-```
+hosts
+  → eigen/static DNS-namen beantwoorden
 
-Assignment:
+forward
+  → overige DNS-vragen doorsturen naar upstream resolver
 
-Create an nginx Deployment.
+fallthrough
+  → wanneer hosts een naam niet kent, laat de query verdergaan
 
-Acceptance criteria:
+Mentale route:
 
-```text
-Deployment: web
-Desired replicas: 1
-Container image: nginx
-Pod: Running
-Deployment: available/healthy
-```
+web.home.arpa
+  ↓
+hosts
+  ↓
+192.168.0.10
 
-Pod evidence:
 
-```bash
-kubectl get pods
-```
+google.com
+  ↓
+hosts
+  ↓
+niet gevonden
+  ↓
+fallthrough
+  ↓
+forward
+  ↓
+192.168.0.1
 
-Result:
+Exacte CoreDNS-syntax valt onder:
 
-```text
-NAME                   READY   STATUS    RESTARTS
-web-6c5f67b5f7-q9fx7   1/1     Running   0
-```
+📖 OPZOEKEN
 
-Detailed evidence:
+Conceptuele werking valt onder:
 
-```bash
-kubectl describe pod web-6c5f67b5f7-q9fx7
-```
+🧠 KENNEN
 
-Important values:
+---
 
-```text
-Namespace: web
-Status: Running
-IP: 10.42.0.9
-Controlled By: ReplicaSet/web-6c5f67b5f7
+# 10. NAMESPACE
 
-Container:
-nginx
+Aangemaakt:
+
+kubectl create namespace homelab-dns
+
+Resultaat:
+
+namespace/homelab-dns created
+
+Architectuur:
+
+Kubernetes
+├── kube-system
+│   └── CoreDNS
+│       interne cluster DNS
+│
+├── web
+│   └── nginx
+│
+└── homelab-dns
+    └── onze LAN DNS
+
+---
+
+# 11. CONFIGMAP
+
+Bestand:
+
+coredns-config.yaml
+
+Inhoud:
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: coredns-config
+  namespace: homelab-dns
+data:
+  Corefile: |
+    .:53 {
+      hosts {
+        192.168.0.10 web.home.arpa
+        fallthrough
+      }
+      forward . 192.168.0.1
+      log
+      errors
+    }
+
+Toegepast:
+
+kubectl apply -f coredns-config.yaml -n homelab-dns
+
+Resultaat:
+
+configmap/coredns-config created
+
+Belangrijk begrip:
+
+ConfigMap
+  → configuratie los van container-image
 
 Image:
-nginx:1.14.2
+  "welke software?"
 
-Port:
-80/TCP
-
-Ready:
-True
-```
-
-Deployment evidence:
-
-```bash
-kubectl get deployments
-```
-
-Result:
-
-```text
-NAME   READY   UP-TO-DATE   AVAILABLE
-web    1/1     1            1
-```
-
-Result:
-
-**Mini-Boss 2 PASSED independently.**
+ConfigMap:
+  "hoe moet deze software zich in deze omgeving gedragen?"
 
 ---
 
-# 8. Namespace Decision
+# 12. CONFIGMAP → CONTAINER
 
-A separate namespace was created:
+Nieuw Kubernetes-patroon geleerd:
 
-```text
-web
-```
-
-The namespace was set as current context rather than placing the workload in `default`.
-
-Reason:
-
-Keep application resources organized and avoid unnecessarily filling the default namespace.
-
-This was an independent design decision outside the minimum assignment requirements.
-
----
-
-# 9. Mini-Boss 3 — Reconciliation
-
-Goal:
-
-Prove Kubernetes desired-state reconciliation instead of merely reading about it.
-
-Initial Pod:
-
-```text
-web-6c5f67b5f7-q9fx7
-```
-
-The Pod was deliberately deleted:
-
-```bash
-kubectl delete pod web-6c5f67b5f7-q9fx7
-```
-
-Immediately afterwards:
-
-```bash
-kubectl get pods
-```
-
-Result:
-
-```text
-NAME                   READY   STATUS
-web-6c5f67b5f7-sxhgl   1/1     Running
-```
-
-Old Pod:
-
-```text
-web-6c5f67b5f7-q9fx7
-```
-
-New Pod:
-
-```text
-web-6c5f67b5f7-sxhgl
-```
-
-This proved:
-
-```text
-Desired replicas = 1
-
-Pod deleted
-    ↓
-Actual replicas = 0
-    ↓
-ReplicaSet controller detects drift
-    ↓
-New Pod created
-    ↓
-Actual replicas = 1
-```
-
-The ReplicaSet is directly responsible for maintaining the requested number of Pods.
-
-The Deployment manages the ReplicaSet.
-
-Result:
-
-**Mini-Boss 3 PASSED independently.**
-
----
-
-# 10. Desired State and Reconciliation
-
-Current understanding in own words:
-
-If a certain state of the Pods is desired, the Deployment/controller structure ensures that Kubernetes keeps moving the actual state back toward the desired state.
-
-```text
-DESIRED STATE
-      ↓
-controller observes
-      ↓
-ACTUAL STATE
-      ↓
-difference/drift?
-      ↓
-reconcile
-      ↓
-DESIRED ≈ ACTUAL
-```
-
-This concept has now been:
-
-- explained
-- built
-- deliberately broken
-- observed
-- independently tested
-
-This is strong evidence, but NOT yet sufficient for 🟢 because retention and transfer still need to be demonstrated later.
-
----
-
-# 11. Why Pod IP Is Not the Application Interface
-
-After reconciliation, the replacement Pod received:
-
-```text
-10.42.0.10
-```
-
-The earlier Pod had:
-
-```text
-10.42.0.9
-```
-
-Important lesson:
-
-**Pods are ephemeral.**
-
-Therefore an application should not depend directly on one specific Pod IP.
-
-```text
-Client
+ConfigMap
   ↓
-10.42.0.9
+Volume
   ↓
-Pod disappears
+VolumeMount
   ↓
-address is no longer a stable application endpoint
-```
+bestand in container
 
-Solution:
+Onze concrete keten:
 
-Use a Kubernetes Service.
+ConfigMap: coredns-config
+  │
+  │ bevat key: Corefile
+  ▼
+Pod volume: coredns-config
+  ▼
+volumeMount
+  ▼
+/etc/coredns
+  ▼
+/etc/coredns/Corefile
+  ▼
+CoreDNS
 
 ---
 
-# 12. Service Mental Model
+# 13. DEPLOYMENT
 
-A Service provides a stable abstraction in front of Pods.
+Bestand:
 
-```text
-Service
-   ↓
-selector
-   ↓
-Pods with matching labels
-```
+coredns-deployment.yaml
 
-Current selector:
+Huidige inhoud:
 
-```text
-app=nginx
-```
-
-Pod label:
-
-```text
-app=nginx
-```
-
-This allows the Service to find replacement Pods without depending on Pod names or Pod IPs.
-
-With multiple replicas:
-
-```text
-             Service
-                │
-      ┌─────────┼─────────┐
-      ↓         ↓         ↓
-    Pod 1     Pod 2     Pod 3
- app=nginx  app=nginx  app=nginx
-```
-
----
-
-# 13. Mini-Boss 4 — ClusterIP Service
-
-Support mode:
-
-```text
-A — Independent
-```
-
-Initial Service was created as:
-
-```text
-my-web-service
-```
-
-Evidence:
-
-```text
-TYPE:       ClusterIP
-ClusterIP:  10.43.79.182
-Port:       80
-Selector:   app=nginx
-TargetPort: 80
-Endpoint:   10.42.0.10:80
-```
-
-Pod evidence:
-
-```text
-Pod IP: 10.42.0.10
-Port:   80/TCP
-```
-
-This proved:
-
-```text
-Service
-  ↓
-10.42.0.10:80
-  ↓
-nginx Pod
-```
-
-However, the assignment required:
-
-```text
-Service name: web
-```
-
-The initial name:
-
-```text
-my-web-service
-```
-
-did not satisfy the acceptance criteria.
-
-Important engineering distinction:
-
-```text
-"it works"
-        ≠
-"it satisfies the requirements"
-```
-
-The Service was corrected declaratively using:
-
-```bash
-kubectl apply -f service.yaml
-```
-
-Final manifest:
-
-```yaml
-apiVersion: v1
-kind: Service
+apiVersion: apps/v1
+kind: Deployment
 metadata:
-  name: web
+  name: coredns
+  namespace: homelab-dns
+  labels:
+    app: coredns
 spec:
+  replicas: 1
   selector:
-    app: nginx
-  ports:
-    - protocol: TCP
-      port: 80
-      targetPort: 80
-```
+    matchLabels:
+      app: coredns
+  template:
+    metadata:
+      labels:
+        app: coredns
+    spec:
+      containers:
+      - name: coredns
+        image: coredns/coredns:1.14.7
+        args:
+          - -conf
+          - /etc/coredns/Corefile
+        volumeMounts:
+          - name: coredns-config
+            mountPath: /etc/coredns
+            readOnly: true
+      volumes:
+        - name: coredns-config
+          configMap:
+            name: coredns-config
 
-Because no explicit Service type was configured, Kubernetes used the default:
+LET OP:
 
-```text
-ClusterIP
-```
+Deployment is nog NIET toegepast.
 
-Result:
-
-**Mini-Boss 4 PASSED independently.**
-
----
-
-# 14. Kubernetes Network Model Observed
-
-Current addresses:
-
-```text
-LAN / physical network
-192.168.0.x
-
-Homeserver / Node
-192.168.0.10
-
-Kubernetes Pod network
-10.42.x.x
-
-Kubernetes Service network
-10.43.x.x
-```
-
-The laptop has a route to:
-
-```text
-192.168.0.10
-```
-
-but not automatically to the Kubernetes internal Pod and Service networks.
-
-Therefore the ClusterIP cannot simply be used as the external application address from the laptop.
+Dit is het exacte stoppunt.
 
 ---
 
-# 15. NodePort Mental Model
+# 14. DEPLOYMENT REGEL-VOOR-REGEL DOORGENOMEN
 
-Problem:
+matchLabels:
+  selector/filter op labels
 
-Expose the Service outside the Kubernetes internal network.
+app: coredns
+  key=value label waarop gezocht wordt
 
-Solution introduced:
+template:
+  bouwtekening voor toekomstige Pods
 
-```text
-NodePort
-```
+metadata:
+  identificerende/beschrijvende informatie van de Pod-template
 
-Mental model:
+labels:
+  labels die toekomstige Pods krijgen
 
-```text
-Laptop
-   ↓
-Node IP : NodePort
-   ↓
-Kubernetes Service
-   ↓
-Pod
-   ↓
-Application
-```
+app: coredns
+  Pod krijgt label app=coredns
 
-Important distinction:
+spec:
+  gewenste technische opbouw van de Pod
 
-```text
-Node IP
-192.168.0.10
-```
+containers:
+  lijst containers binnen de Pod
 
-is reachable from the laptop.
+- name: coredns
+  naam van onze container
 
-The NodePort provides an entry point on the node.
+image: coredns/coredns:1.14.7
+  container-image/software + gepinde versie
 
-The Service then routes traffic to matching Pods.
+args:
+  argumenten voor het programma bij starten
 
----
+-conf
+  CoreDNS argument: gebruik specifiek configuratiebestand
 
-# 16. Mini-Boss 5 — External Reachability
+/etc/coredns/Corefile
+  pad naar dat configuratiebestand
 
-The existing Service `web` was changed to:
+volumeMounts:
+  welke volumes deze container gebruikt en waar
 
-```text
-Type: NodePort
-```
+name: coredns-config
+  verwijst naar Pod-volume met dezelfde naam
 
-Evidence:
+mountPath: /etc/coredns
+  volume wordt daar zichtbaar in container
 
-```bash
-kubectl get svc -n web
-```
+readOnly: true
+  container mag configuratie alleen lezen
 
-Result:
+volumes:
+  volumes die de Pod beschikbaar heeft
 
-```text
-NAME   TYPE       CLUSTER-IP    PORT(S)
-web    NodePort   10.43.33.30   80:30008/TCP
-```
+name: coredns-config
+  naam van het Pod-volume
 
-Therefore:
+configMap:
+  bron van volume is een Kubernetes ConfigMap
 
-```text
-Service port: 80
-NodePort:     30008
-```
-
-Server-side test:
-
-```bash
-curl -I http://localhost:30008
-```
-
-Result:
-
-```text
-HTTP/1.1 200 OK
-Server: nginx/1.14.2
-```
-
-This proved:
-
-```text
-NodePort
-   ↓
-Service
-   ↓
-Pod
-   ↓
-nginx
-```
-
-was functioning on the node.
+name: coredns-config
+  specifieke ConfigMap die als bron wordt gebruikt
 
 ---
 
-# 17. Troubleshooting External Access
+# 15. BELANGRIJKE VERBINDINGEN VANDAAG
 
-Initially the application appeared unreachable from the laptop.
+DNS ≠ Traefik.
 
-Troubleshooting was performed layer by layer.
+DNS:
+naam → IP
 
-First:
+Traefik:
+HTTP-request → juiste Kubernetes Service
 
-```text
-Laptop → ping → 192.168.0.10
-```
+Gewenste eindroute:
 
-worked.
-
-This proved IP-level reachability to the homeserver.
-
-However:
-
-```text
-ping
-```
-
-does NOT prove that TCP port `30008` works.
-
-A direct HTTP test was then performed from the laptop:
-
-```bash
-curl -I http://192.168.0.10:30008
-```
-
-Result:
-
-```text
-HTTP/1.1 200 OK
-Server: nginx/1.14.2
-```
-
-This proved end-to-end HTTP connectivity from the laptop through Kubernetes to nginx.
-
-The browser still appeared broken.
-
-Evidence comparison found that the browser was using:
-
-```text
-192.168.0.10:3000
-```
-
-instead of:
-
-```text
-192.168.0.10:30008
-```
-
-After using:
-
-```text
-http://192.168.0.10:30008
-```
-
-the nginx page loaded successfully.
-
-Troubleshooting lesson:
-
-Do not change the platform immediately when one client appears broken.
-
-Compare evidence between layers first.
-
-```text
-Browser :3000    → failed
-curl    :30008   → HTTP 200
-```
-
-The problem was the client request using the wrong port, not Kubernetes.
-
-Result:
-
-**Mini-Boss 5 PASSED.**
-
-Support:
-
-Mostly independent, with one small hint during TCP/HTTP testing.
-
----
-
-# 18. Current End-to-End Architecture
-
-The following chain is now WORKING and VERIFIED:
-
-```text
-Laptop / Brave
-192.168.0.x
-       │
-       │ HTTP
-       ▼
-192.168.0.10:30008
-       │
-       ▼
-Kubernetes NodePort
-       │
-       ▼
-Service: web
-ClusterIP: 10.43.33.30
-Port: 80
-Selector: app=nginx
-       │
-       ▼
-Pod
-10.42.0.10:80
-       │
-       ▼
-nginx container
-       │
-       ▼
-HTTP 200 OK
-```
-
-Controller chain:
-
-```text
-Deployment
-    ↓
-ReplicaSet
-    ↓
-Pod
-    ↓
-Container
-```
-
-Network chain:
-
-```text
-Laptop
-    ↓
-Node IP
-    ↓
-NodePort
-    ↓
-Service
-    ↓
-Pod IP
-    ↓
-Container port
-```
-
----
-
-# 19. Important Concepts Practiced Today
-
-## Linux / Platform boundary
-
-```text
-systemd
-   ↓
-k3s.service
-   ↓
-k3s-server
-   ↓
-Kubernetes
-```
-
-## Kubernetes health
-
-```text
-k3s active
-```
-
-does not automatically mean:
-
-```text
-Node Ready
-```
-
-Health must be checked at the correct layer.
-
-## Desired state
-
-Kubernetes controllers continuously compare desired state with actual state.
-
-## Reconciliation
-
-Deleting a managed Pod caused Kubernetes to automatically create a replacement.
-
-## Ephemeral Pods
-
-Pod identity and Pod IP should not be treated as stable application endpoints.
-
-## Labels and selectors
-
-Services discover Pods through labels/selectors.
-
-## Service
-
-Provides a stable abstraction in front of changing Pods.
-
-## ClusterIP
-
-Internal Kubernetes Service address.
-
-## NodePort
-
-Makes a Service reachable through a port on a Kubernetes node.
-
-## Evidence-driven troubleshooting
-
-Test each layer independently before changing configuration.
-
----
-
-# 20. Evidence Produced Today
-
-- Official k3s installation source used.
-- k3s install script inspected before execution.
-- k3s installed on clean Ubuntu Server.
-- k3s systemd service verified.
-- Kubernetes node verified Ready.
-- First Deployment built independently.
-- Deployment health verified.
-- Pod inspected.
-- Namespace `web` used.
-- Pod deliberately deleted.
-- Kubernetes reconciliation independently demonstrated.
-- ClusterIP Service created.
-- Service selector → Pod endpoint relationship verified.
-- Service requirement mismatch detected and corrected.
-- Service manifest created declaratively.
-- NodePort configured.
-- nginx tested locally through NodePort.
-- laptop → homeserver connectivity tested.
-- laptop → NodePort → Service → Pod → nginx tested with curl.
-- browser access verified.
-- incorrect browser port diagnosed through evidence comparison.
-
----
-
-# 21. Skill Evidence Status
-
-No skill is promoted to 🟢 solely because today's work succeeded.
-
-Promotion to 🟢 still requires:
-
-- independent evidence
-- reproduction in another practical context
-- retention evidence at least 48 hours later
-- explanation of why it works
-
-Today's Kubernetes work provides strong independent evidence that can later be used toward promotion.
-
-| Skill | Level |
-|---|---|
-| Git / Repository / Governance | 🟡 2 |
-| Linux | 🟡 2 |
-| Server Foundation | 🟡 2 |
-| Network / DNS / Ingress | 🟡 2 |
-| Kubernetes Platform | 🟡 2 |
-| Storage | 🟡 2 |
-| Secrets | 🔴 0 |
-| CI/CD | 🟠 1 |
-| GitOps | 🟠 1 |
-| Observability | 🟠 1 |
-| Security | 🟡 2 |
-| Developer Platform / Self-Service | 🟠 1 |
-| Reliability / Backup / DR | 🟠 1 |
-| Cloud Platform | 🔴 0 |
-| Hybrid / Multi-environment | 🔴 0 |
-| Chaos / Incident Response | 🟠 1 |
-| Employer Portfolio / Assessment | 🟠 1 |
-| Final Zero-to-Production Rebuild | 🔴 0 |
-
----
-
-# 22. Next Architecture Problem
-
-NodePort works:
-
-```text
-http://192.168.0.10:30008
-```
-
-But this is not how applications should ultimately be exposed.
-
-Target:
-
-```text
-http://web.home.arpa
-```
-
-Future architecture:
-
-```text
 Browser
-   │
-   │ web.home.arpa
-   ▼
-DNS
-   │
-   │ name → IP
-   ▼
-192.168.0.10:80
-   │
-   ▼
-Ingress Controller
-Traefik
-   │
-   │ host/path routing
-   ▼
-Service: web
-   │
-   ▼
-Pod
-   │
-   ▼
-nginx
-```
-
-Important distinction:
-
-```text
-DNS
-name → IP address
-
-Ingress
-HTTP request → correct Kubernetes Service
-```
-
-k3s already installed Traefik, so an Ingress Controller appears to already exist.
-
-This must still be investigated and verified rather than assumed.
-
----
-
-# EXACT STOPPING POINT
-
-The last question before stopping was:
-
-> If `web.home.arpa` is entered into the browser, what must happen first before the request can reach Traefik?
-
-Resume here next session.
-
-Do NOT give the answer first.
-
-Let Maurice reason from the current network chain.
-
----
-
-# Next Session
-
-Continue with:
-
-```text
-DNS
- ↓
-Ingress / Traefik
- ↓
-Service
- ↓
-Pod
-```
-
-Likely build target:
-
-```text
-web.home.arpa
-      ↓
-192.168.0.10
-      ↓
+  │
+  │ web.home.arpa
+  ▼
+Homelab DNS
+  │
+  │ 192.168.0.10
+  ▼
 Traefik :80
-      ↓
-Ingress rule
-      ↓
-Service web :80
-      ↓
+  │
+  │ host/path routing
+  ▼
+Service web
+  │
+  │ selector
+  ▼
 nginx Pod
-```
-
-Keep build-first approach.
-
-Do not introduce unnecessary production complexity yet.
 
 ---
 
-# DAILY SKILL PROGRESS — 24-09-2026
+# 16. LEEROBSERVATIES
 
-No percentages are assigned yet because objective percentage criteria have not yet been defined.
+Sterk vandaag:
 
-```text
-╔════════════════════ DAILY SKILL PROGRESS — 24-09-2026 ════════════════════╗
+- Zelfstandig juiste namespace aangemaakt.
+- LoadBalancer gekozen op basis van requirements.
+- Bewust gekozen voor aparte homelab-DNS wegens separation of concerns.
+- Correct begrepen dat svclb verkeer doorstuurt naar Traefik Service.
+- `hosts` correct gekoppeld aan lokale DNS-records.
+- `fallthrough` conceptueel correct uitgelegd.
+- selector → label relatie opnieuw herkend.
+- `/etc/coredns/Corefile` correct afgeleid uit mountPath + ConfigMap key.
+- Deployment/ConfigMap koppeling uiteindelijk correct opgebouwd.
+- Bestaande evidence kritisch gebruikt.
 
-                                      LEVEL       TODAY
- 1  Git / Repository / Governance     🟡 2         —
- 2  Linux                              🟡 2         ▲
- 3  Server Foundation                  🟡 2         ▲
- 4  Network / DNS / Ingress            🟡 2         ▲
- 5  Kubernetes Platform                🟡 2         ▲▲
- 6  Storage                            🟡 2         —
- 7  Secrets                            🔴 0         —
- 8  CI/CD                              🟠 1         —
- 9  GitOps                             🟠 1         —
-10  Observability                      🟠 1         —
-11  Security                           🟡 2         ▲
-12  Developer Platform / Self-Service  🟠 1         —
-13  Reliability / Backup / DR          🟠 1         ▲
-14  Cloud Platform                     🔴 0         —
-15  Hybrid / Multi-environment         🔴 0         —
-16  Chaos / Incident Response          🟠 1         ▲
-17  Employer Portfolio / Assessment    🟠 1         ▲
-18  Final Zero-to-Production Rebuild   🔴 0         —
+Nog versterken:
 
-TODAY'S STRONGEST EVIDENCE
+- CoreDNS versus Traefik blijft herhaling nodig hebben.
+- ClusterIP / NodePort / LoadBalancer nog niet als retained kennis beschouwen.
+- `ss` nog niet zelfstandig teruggehaald.
+- ConfigMap/volume/volumeMount is nieuw en begeleid.
+- YAML-hiërarchie nog begeleid.
+- CoreDNS Corefile-syntax is 📖 OPZOEKEN.
+- DNS UDP/TCP 53 nog herhalen.
+- `0.0.0.0` versus loopback later opnieuw zelfstandig testen.
+
+Geen 🟢 promoties op basis van vandaag alleen.
+Nieuwe kennis moet later zelfstandig en na ≥48 uur opnieuw bewezen worden.
+
+---
+
+# 17. EXACT STOPPUNT / VOLGENDE SESSIE
+
+NIET opnieuw beginnen.
+
+We staan hier:
+
+ConfigMap       ✅ aangemaakt
+Namespace       ✅ aangemaakt
+Deployment YAML ✅ voorbereid
+Deployment      ❌ nog niet toegepast
+CoreDNS Pod     ❌ nog niet bewezen Running
+Service         ❌ nog niet gemaakt
+DNS test        ❌ nog niet gedaan
+Resolver switch ❌ nog niet gedaan
+Ingress         ❌ nog niet gemaakt
+
+VOLGENDE ACTIE:
+
+1. Kort reconstrueren wat Deployment + ConfigMap doen.
+2. coredns-deployment.yaml toepassen.
+3. Observeren wat Kubernetes werkelijk maakt.
+4. Pod-status controleren.
+5. Bij fout: NIET direct repareren; eerst evidence/logs/events.
+6. CoreDNS intern testen.
+7. Daarna pas LoadBalancer Service ontwerpen voor UDP/TCP 53.
+8. Testen met directe DNS-query naar 192.168.0.10.
+9. Daarna resolver/DHCP-route ontwerpen.
+10. Daarna Traefik Ingress voor web.home.arpa.
+11. Uiteindelijk NodePort 30008 overbodig maken.
+12. Git diff → commit → push als evidence.
+
+---
+
+# 18. CURRENT ARCHITECTURE
+
+Laptop 192.168.0.111
+│
+├── DNS momenteel
+│      ↓
+│   systemd-resolved
+│      ↓
+│   192.168.0.1
+│
+└── Kubernetes access
+       ↓
+    homeserver 192.168.0.10
+       ↓
+    k3s
+       │
+       ├── kube-system
+       │    ├── Kubernetes CoreDNS
+       │    ├── Traefik
+       │    └── ServiceLB
+       │
+       ├── web
+       │    ├── nginx Deployment
+       │    ├── nginx Pod
+       │    └── NodePort Service :30008
+       │
+       └── homelab-dns
+            ├── ConfigMap coredns-config ✅
+            ├── CoreDNS Deployment YAML prepared
+            ├── CoreDNS Pod ❌
+            └── LoadBalancer Service ❌
+
+---
+
+# 19. DAILY SKILL PROGRESS — 25-09-2026
+
+╔════════════════════ DAILY SKILL PROGRESS — 25-09-2026 ════════════════════╗
+
+                                        LEVEL
+ 1  Git / Repository / Governance        🟡 2
+ 2  Linux                                🟡 2
+ 3  Server Foundation                    🟡 2
+ 4  Network / DNS / Ingress              🟡 2
+ 5  Kubernetes Platform                  🟡 2
+ 6  Storage                              🟡 2
+ 7  Secrets                              🔴 0
+ 8  CI/CD                                🟠 1
+ 9  GitOps                               🟠 1
+10  Observability                        🟠 1
+11  Security                             🟡 2
+12  Developer Platform / Self-Service    🟠 1
+13  Reliability / Backup / DR            🟠 1
+14  Cloud Platform                       🔴 0
+15  Hybrid / Multi-environment           🔴 0
+16  Chaos / Incident Response            🟠 1
+17  Employer Portfolio / Assessment      🟠 1
+18  Final Zero-to-Production Rebuild     🔴 0
+
+TODAY'S EVIDENCE
+
+Network / DNS:
++ DNS resolver chain investigated
++ routing to ClusterIP investigated
++ traceroute evidence
++ port 53 binding investigated
++ DNS architecture designed
 
 Kubernetes:
-  Deployment → ReplicaSet → Pod → Container        ✓
-  Desired state / reconciliation                   ✓
-  Service selector → Pod                           ✓
-  ClusterIP                                        ✓
-  NodePort                                         ✓
-  End-to-end browser access                        ✓
++ Service types reinforced
++ k3s ServiceLB investigated
++ ConfigMap created
++ ConfigMap → Volume → VolumeMount understood
++ CoreDNS Deployment YAML built with guidance
 
-Troubleshooting:
-  layer-by-layer investigation                     ✓
-  ping vs HTTP distinction                         ✓
-  wrong client port identified                     ✓
+Architecture:
++ separation of concerns applied
++ separate LAN DNS chosen instead of modifying cluster DNS
++ blast radius considered
++ minimal-complexity principle applied
 
 LEVELS
 🔴 0 Niet bekend    🟠 1 Herkenning    🟡 2 Begeleid
 🟢 3 Zelfstandig    🔵 4 Engineer      🟣 5 Architect
 
-🟢 requires:
-independent evidence
-+ transfer to another situation
-+ reproduction ≥48h later
-+ explanation of why it works
+IMPORTANT:
+No level promotion today.
+🟢 requires independent evidence, transfer to another situation,
+explanation of why it works, and reproduction ≥48 hours later.
 
-═══════════════════════════════════════════════════════════════════════════════
-```
+Percentages remain omitted until objective capability criteria
+have been defined.
 
----
-
-# Session Summary
-
-Today the clean Ubuntu homeserver became a functioning Kubernetes platform.
-
-The most important achievement was not simply installing k3s.
-
-The complete working chain was built, tested, deliberately changed and troubleshot:
-
-```text
-Laptop
-  ↓
-Ubuntu Server
-  ↓
-k3s
-  ↓
-Kubernetes Node
-  ↓
-Deployment
-  ↓
-ReplicaSet
-  ↓
-Pod
-  ↓
-Container
-  ↑
-Service
-  ↑
-NodePort
-  ↑
-Browser
-```
-
-Next step:
-
-```text
-DNS → Ingress → Service → Pod
-```
+╚═════════════════════════════════════════════════════════════════════════════╝
