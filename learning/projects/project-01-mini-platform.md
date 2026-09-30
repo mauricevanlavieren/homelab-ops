@@ -3,9 +3,9 @@
 ## Status
 
 **Status:** IN PROGRESS  
-**Current phase:** Phase 4 — Source of Truth  
-**Current step:** Move Kubernetes manifests into `homelab-ops`  
-**Next milestone:** Kubernetes desired state stored in GitHub
+**Current phase:** Phase 5 — Break / Fix  
+**Current step:** Create a controlled platform failure  
+**Next milestone:** Diagnose and recover the platform using evidence
 
 ---
 
@@ -176,13 +176,13 @@ web.home.arpa
 
 # 6. Phase 4 — Source of Truth
 
-## CURRENT PHASE
+## COMPLETED
 
 ### Problem
 
-The Kubernetes manifests currently exist on the homeserver.
+The Kubernetes manifests originally existed only on the homeserver.
 
-The platform works, but the Kubernetes desired state is not yet safely stored in the Git repository.
+The platform worked, but the Kubernetes desired state was not yet safely stored in the Git repository.
 
 ### Goal
 
@@ -196,36 +196,93 @@ Kubernetes desired state
 
 ### Tasks
 
-- [ ] Inspect current Kubernetes manifests
-- [ ] Determine correct repository structure
-- [ ] Move/copy app manifests into `homelab-ops`
-- [ ] Move/copy infrastructure manifests into `homelab-ops`
-- [ ] Review manifests
-- [ ] Compare Git configuration with live Kubernetes state
-- [ ] Check `git diff`
-- [ ] Commit desired state
-- [ ] Push to GitHub
-- [ ] Verify GitHub contains the reproducible baseline
+- [x] Inspect current Kubernetes manifests
+- [x] Determine correct repository structure
+- [x] Move/copy app manifests into `homelab-ops`
+- [x] Move/copy infrastructure manifests into `homelab-ops`
+- [x] Review manifests
+- [x] Compare Git configuration with live Kubernetes state
+- [x] Check `git diff`
+- [x] Commit desired state
+- [x] Push to GitHub
+- [x] Verify GitHub contains the reproducible baseline
 
-### Expected Repository Direction
+### Repository Structure
 
 ```text
 homelab-ops/
-├── apps/
-│   └── web/
+├── kubernetes/
+│   ├── apps/
+│   │   └── web/
+│   │       ├── deployment.yaml
+│   │       ├── service.yaml
+│   │       └── ingress.yaml
+│   │
+│   └── infrastructure/
+│       └── dns/
+│           ├── configmap.yaml
+│           ├── deployment.yaml
+│           └── service.yaml
 │
-├── infrastructure/
-│   └── dns/
+├── learning/
+│   ├── progress/
+│   ├── projects/
+│   ├── assessments/
+│   └── skill-passport.md
 │
 └── docs/
-    ├── architecture/
-    ├── progress/
-    └── projects/
+    └── architecture/
 ```
+
+### Desired State Verification
+
+The Git configuration was manually compared with the live Kubernetes state.
+
+Verified resources:
+
+```text
+web namespace
+├── Deployment web
+├── Service web
+└── Ingress web
+
+homelab-dns namespace
+├── Deployment coredns
+├── Service coredns
+└── ConfigMap coredns-config
+```
+
+The managed CoreDNS configuration in Git matches the relevant live Kubernetes configuration.
+
+During verification an additional Service was discovered:
+
+```text
+web/my-web-service
+```
+
+The Service was investigated before removal.
+
+The active Ingress routes to:
+
+```text
+Ingress web
+   ↓
+Service web
+   ↓
+Pods matching app=nginx
+```
+
+`my-web-service` was not part of the active request path and was not present in the Git desired state.
+
+The Service was deleted and the application was tested again successfully.
+
+This provided practical evidence of identifying and removing live-state drift.
+
+### Current Source of Truth Model
 
 GitOps is intentionally **not** introduced yet.
 
-For now:
+Current model:
 
 ```text
 Git
@@ -235,7 +292,7 @@ human applies configuration
 Kubernetes
 ```
 
-Later:
+Future model:
 
 ```text
 Git
@@ -249,9 +306,13 @@ Kubernetes
 
 # 7. Phase 5 — Break / Fix
 
-## Goal
+## CURRENT PHASE
+
+### Goal
 
 Prove that the platform can be troubleshot and recovered using evidence rather than guessing.
+
+### Tasks
 
 - [ ] Create controlled failure
 - [ ] Observe symptoms
@@ -285,6 +346,24 @@ recover
 verify
 ```
 
+The failure must be controlled and recoverable.
+
+The purpose is not simply to repair the platform.
+
+The purpose is to demonstrate the ability to determine:
+
+```text
+What is the symptom?
+        ↓
+Which layer could cause it?
+        ↓
+What evidence can prove or disprove that?
+        ↓
+Where is the actual failure?
+        ↓
+How can the known desired state be used for recovery?
+```
+
 ---
 
 # 8. Phase 6 — Review & Documentation
@@ -308,11 +387,19 @@ Laptop receives both:
 
 as DNS servers although Secondary DNS is blank in the router configuration.
 
-## Known Kubernetes Cleanup Issue
+The source of `192.168.0.1` still needs to be investigated.
 
-Current Service inventory contains potentially unnecessary/orphaned Services.
+## Kubernetes Cleanup
 
-These must be investigated before deleting anything.
+During Phase 4 an orphaned Service was discovered:
+
+```text
+web/my-web-service
+```
+
+It was investigated and safely removed.
+
+Before Project 1 is closed, the cluster-wide resource inventory should be reviewed once more for additional unmanaged or obsolete resources.
 
 ---
 
@@ -361,6 +448,8 @@ Skill promotion to 🟢 requires:
 - reproduction after at least 48 hours
 - explanation of why it works
 
+A skill is not promoted simply because it was successfully used once.
+
 ---
 
 # 11. Out of Scope for Project 1
@@ -396,19 +485,70 @@ Networking / DNS        [DONE]
         ↓
 Ingress                 [DONE]
         ↓
-SOURCE OF TRUTH         [CURRENT]
+Source of Truth         [DONE]
         ↓
-Break / Fix
+BREAK / FIX             [CURRENT]
         ↓
-Review
+Review & Documentation
         ↓
 Assessment
+        ↓
+Project Gate
         ↓
 Project 1 Complete
 ```
 
 ---
 
-# 13. Next Step
+# 13. Evidence So Far
 
-Inspect the existing Kubernetes manifests on the homeserver and design their permanent structure inside `homelab-ops` before copying anything.
+Evidence produced during Project 1 includes:
+
+```text
+Clean Ubuntu Server installation
+Static network configuration
+Server foundation documentation
+Working k3s installation
+Kubernetes Deployment / ReplicaSet / Pod
+Pod reconciliation test
+NodePort connectivity
+Local CoreDNS deployment
+DHCP-delivered DNS configuration
+Local and public DNS resolution
+Traefik Ingress
+End-to-end HTTP request path
+Kubernetes manifests stored in Git
+GitHub desired-state baseline
+Manual Git ↔ live Kubernetes comparison
+Identification of live-state drift
+Controlled removal of orphaned Service
+Successful application verification after cleanup
+```
+
+GitHub remains the technical source of truth for project configuration and evidence.
+
+---
+
+# 14. Next Step
+
+Create a controlled failure in the working platform.
+
+The failure will be used to test the complete troubleshooting workflow:
+
+```text
+observe
+   ↓
+hypothesis
+   ↓
+investigate
+   ↓
+isolate
+   ↓
+root cause
+   ↓
+recover
+   ↓
+verify
+```
+
+The troubleshooting exercise must be completed using evidence rather than random configuration changes.
