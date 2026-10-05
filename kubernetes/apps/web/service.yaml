@@ -4,12 +4,11 @@ metadata:
   name: web
   namespace: web
 spec:
-  type: NodePort
+  type: ClusterIP
   selector:
     app: nginx
   ports:
     - protocol: TCP
       port: 80
       targetPort: 80
-      nodePort: 30008
 
