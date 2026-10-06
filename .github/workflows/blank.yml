@@ -16,4 +16,6 @@ jobs:
         uses: actions/checkout@v4
       - name: Check for kubectl
         run: which kubectl
+      - name: Get kubectl version
+        run: kubectl version --client
 
