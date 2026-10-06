@@ -1,283 +1,647 @@
-Current Session --- 2026-09-28
+# Current Session — 2026-10-06
 
-Project
+## Project
 
-Project 1 --- Mini Platform
+Project 01 — Mini Platform
 
-Today's focus
+## Current Status
 
-Make the homelab DNS design persistent for clients through DHCP and
-verify the DNS path.
+**PROJECT 01 COMPLETED**
 
-Context / Architecture
+Project 01 has progressed through:
 
-Desired local request flow:
+1. Server Foundation
+2. Kubernetes Foundation
+3. Networking / DNS / Ingress
+4. Source of Truth
+5. Break / Fix
+6. Review & Documentation
+7. Assessment
+8. Project Gate
 
+The practical assessment has been completed.
+
+Assessment evidence:
+
+`learning/assessments/project-01-assessment.md`
+
+---
+
+# What We Built
+
+The current mini platform consists of:
+
+```text
 Laptop / Browser
-      │
-      │ DNS query
-      ▼
-systemd-resolved
-127.0.0.53
-      │
-      │ DNS server received via DHCP
-      ▼
+       │
+       │ DNS
+       ▼
 CoreDNS
 192.168.0.10:53
-      │
-      ├── local name known
-      │      web.home.arpa → 192.168.0.10
-      │
-      └── unknown/public name
-             → forward to upstream DNS 192.168.0.1
-
-HTTP path after DNS resolution:
-
-Browser
-  │
-  │ http://web.home.arpa
-  ▼
-192.168.0.10:80
-  │
-  ▼
+       │
+       │ web.home.arpa → 192.168.0.10
+       ▼
+Homeserver
+192.168.0.10
+       │
+       │ HTTP :80
+       ▼
 Traefik
-  │
-  ▼
-Ingress: host = web.home.arpa
-  │
-  ▼
-Service: web:80
-  │ selector app=nginx
-  ▼
+       │
+       ▼
+Ingress
+host: web.home.arpa
+       │
+       ▼
+Service
+web:80
+ClusterIP
+       │
+       ▼
 nginx Pod
+```
 
-DNS design decision
+Platform:
 
-TP-Link DHCP is configured to provide the homelab DNS server to clients.
+- Ubuntu Server
+- k3s
+- containerd
+- Kubernetes
+- Traefik
+- CoreDNS for homelab DNS
+- nginx test workload
+- GitHub repository as configuration source of truth
 
-Primary DNS:   192.168.0.10
-Secondary DNS: left blank
+---
 
-Current accepted limitation:
+# Repository Structure
 
-192.168.0.10 / CoreDNS is currently a Single Point of Failure
-(SPOF).
+```text
+homelab-ops/
+├── docs/
+│   └── architecture/
+│       ├── mini-platform-architecture.md
+│       └── network-architecture.md
+│
+├── kubernetes/
+│   ├── apps/
+│   │   └── web/
+│   │       ├── deployment.yaml
+│   │       ├── ingress.yaml
+│   │       └── service.yaml
+│   │
+│   └── infrastructure/
+│       └── dns/
+│           ├── configmap.yaml
+│           ├── deployment.yaml
+│           └── service.yaml
+│
+└── learning/
+    ├── assessments/
+    │   └── project-01-assessment.md
+    │
+    ├── incidents/
+    │   └── break_fix_mini-platform.md
+    │
+    ├── progress/
+    │   ├── current-session.md
+    │   ├── pre-rebuild-baseline.md
+    │   └── server-foundation.md
+    │
+    └── projects/
+        └── project-01-mini-platform.md
+```
 
-True DNS redundancy will be added later using an independent
-machine/node.
+---
 
-Two DNS Pods on the same physical server would not solve physical
-server failure.
+# Project 01 Architecture
 
-Architecture documentation: docs/architecture/network-architecture.md
+## Application Request Path
 
-What we observed
+```text
+Browser
+   │
+   │ web.home.arpa
+   ▼
+DNS
+   │
+   │ 192.168.0.10
+   ▼
+Traefik :80
+   │
+   ▼
+Ingress
+   │
+   ▼
+Service web:80
+   │
+   ▼
+Endpoint
+   │
+   ▼
+nginx Pod
+```
 
-1. Network connectivity to homeserver works
+Important mental model:
 
-ping 192.168.0.10
+```text
+Name → Machine → Application → Instance
+```
+
+DNS:
+
+```text
+Name → Machine
+```
+
+Traefik / Ingress:
+
+```text
+Machine → Application
+```
+
+Service:
+
+```text
+Application → Pod / Instance
+```
+
+This complete chain is understood when visible but is not yet considered independently retained.
+
+It should return naturally in future projects rather than being memorized mechanically.
+
+---
+
+# Source of Truth
+
+GitHub is the technical source of truth for the platform configuration currently stored in the repository.
+
+Current relationship:
+
+```text
+Git
+ │
+ │ desired configuration
+ ▼
+Kubernetes manifests
+```
+
+However, there is currently **no GitOps controller**.
+
+Therefore:
+
+```text
+Git
+   X
+   │ automatic reconciliation
+   ▼
+Kubernetes
+```
+
+A manual change in Kubernetes can therefore create:
+
+**configuration drift**
+
+Example:
+
+```text
+Git:
+replicas = 1
+
+Live Kubernetes:
+replicas = 2
+
+Result:
+DRIFT
+```
+
+Kubernetes itself only reconciles against the desired state stored inside Kubernetes.
+
+Future GitOps will add:
+
+```text
+Git
+ │
+ ▼
+GitOps Controller
+ │
+ ▼
+Kubernetes Deployment
+ │
+ ▼
+ReplicaSet
+ │
+ ▼
+Pods
+```
+
+---
+
+# Break / Fix Evidence
+
+Project 01 deliberately introduced failures.
+
+## Service Selector Failure
+
+The Service selector was changed so it no longer matched the nginx Pod.
+
+Observed result:
+
+```text
+Service
+   │
+   X
+   │
+Endpoints: none
+```
+
+The problem was found through inspection and repaired using the desired configuration.
+
+## Ingress Drift
+
+The live Ingress hostname was deliberately changed.
+
+Git still contained:
+
+`web.home.arpa`
+
+Live Kubernetes contained:
+
+`broken.home.arpa`
+
+This demonstrated configuration drift between Git and the cluster.
+
+The known-good Git configuration was used for recovery.
+
+## Deployment Failure
+
+The Deployment was deliberately scaled to:
+
+`replicas = 0`
+
+Observed:
+
+```text
+web.home.arpa
+      │
+      ▼
+Traefik
+      │
+      ▼
+Ingress
+      │
+      ▼
+Service
+      │
+      X
+      │
+no endpoints
+```
+
+HTTP result:
+
+`503 Service Unavailable`
+
+Git still specified:
+
+`replicas = 1`
+
+The Deployment manifest was reapplied.
 
 Result:
 
-6 packets transmitted
-6 received
-0% packet loss
+- Pod recreated
+- Endpoint returned
+- HTTP 200 returned
+- browser application recovered
 
-Conclusion: laptop → homeserver network connectivity works.
+Incident evidence:
 
-2. First dig test contained a syntax mistake
+`learning/incidents/break_fix_mini-platform.md`
 
-Used:
+---
 
-dig 192.168.0.10 web.home.arpa
+# Platform Cleanup
 
-This does not select 192.168.0.10 as DNS server. It asks the
-current resolver to resolve both arguments as names.
+Project 01 also included cleanup of unnecessary resources.
 
-Evidence showed:
+## NodePort Removal
 
-SERVER: 127.0.0.53#53
+The web application originally exposed:
 
-Correct syntax for explicitly selecting a DNS server:
+`NodePort 30008`
 
-dig @192.168.0.10 web.home.arpa
+The normal request path already used:
 
-3. Direct CoreDNS test succeeded
+```text
+Client
+  ↓
+Traefik
+  ↓
+Ingress
+  ↓
+Service
+  ↓
+Pod
+```
 
-Result:
+The NodePort was therefore unnecessary.
 
-status: NOERROR
-web.home.arpa.  IN A  192.168.0.10
-SERVER: 192.168.0.10#53
+The Service was changed to:
 
-Conclusion: CoreDNS itself correctly resolves the local record.
+`ClusterIP`
 
-4. Laptop initially still had old DHCP DNS configuration
+Current intended Service:
 
-Before reconnecting Ethernet:
+```text
+web
+type: ClusterIP
+port: 80/TCP
+```
 
-Current DNS Server: 192.168.0.1
-DNS Servers:        192.168.0.1
+This reduces unnecessary external exposure and simplifies the architecture.
 
-Hypothesis: existing DHCP lease still contained the previous DNS
-configuration.
+## Orphan Service Removal
 
-Ethernet was disconnected briefly and reconnected so the laptop obtained
-fresh DHCP configuration.
+An old Service existed in the `default` namespace:
 
-After reconnect:
+```text
+default/web
+NodePort 30007
+```
 
-Current DNS Server: 192.168.0.10
-DNS Servers:        192.168.0.10 192.168.0.1
+Investigation showed:
 
-Important open observation:
+- it had no endpoints;
+- it was not part of the active request path;
+- it was not present in the Kubernetes desired-state manifests;
+- deleting it did not affect `web.home.arpa`.
 
-The router's Secondary DNS field was left blank, but the laptop
-still received 192.168.0.1 as an additional DNS server.
+The orphaned Service was removed.
 
-Do not change this blindly. Investigate later why the TP-Link/DHCP
-configuration supplies it.
+---
 
-5. Automatic local DNS resolution succeeded
+# Troubleshooting Model
 
-Without manually specifying @192.168.0.10:
+The main troubleshooting principle practiced during Project 01:
 
-dig web.home.arpa
+```text
+Observe
+   ↓
+Form hypothesis
+   ↓
+Identify layer
+   ↓
+Collect evidence
+   ↓
+Move one layer deeper
+   ↓
+Find failure boundary
+   ↓
+Recover
+   ↓
+Verify
+```
 
-Result:
+For the current application:
 
-status: NOERROR
-web.home.arpa → 192.168.0.10
-SERVER: 127.0.0.53#53
+```text
+Browser
+   ↓
+DNS
+   ↓
+TCP / Entry Point
+   ↓
+Traefik
+   ↓
+Ingress
+   ↓
+Service
+   ↓
+Endpoint / EndpointSlice
+   ↓
+Pod
+```
 
-Interpretation:
+Do not immediately change configuration.
 
-dig
+First determine:
+
+**Where does the expected relationship stop working?**
+
+---
+
+# Project 01 Assessment
+
+Assessment completed:
+
+`learning/assessments/project-01-assessment.md`
+
+## Strong Evidence
+
+Project 01 produced strong evidence for:
+
+- Kubernetes desired-state reasoning
+- Kubernetes reconciliation
+- Service endpoints
+- configuration drift
+- Git as source of truth
+- basic network routing
+- evidence-first troubleshooting
+- orphan resource investigation
+- recovery from deliberately introduced failures
+
+---
+
+# Carry-Forward Learning Gaps
+
+These are not reasons to repeat Project 01.
+
+They must return naturally in Project 02 and later projects.
+
+## Git
+
+Reinforce:
+
+```text
+git diff
+```
+
+versus:
+
+```text
+git diff --staged
+```
+
+Current model:
+
+```text
+Working Tree
+     │
+     │ git add
+     ▼
+Staging Area
+     │
+     │ git commit
+     ▼
+Local Repository
+     │
+     │ git push
+     ▼
+GitHub
+```
+
+The staged-diff distinction was correctly applied again after the assessment, but retention and transfer still need future evidence.
+
+## Linux
+
+Reinforce:
+
+- systemd service investigation
+- service status
+- journal/log investigation
+- historical evidence
+
+The research strategy:
+
+```text
+problem
+  ↓
+domain
+  ↓
+manager/tool
+  ↓
+help/documentation
+  ↓
+evidence
+```
+
+is developing correctly.
+
+## Kubernetes
+
+Reinforce the responsibility boundary:
+
+```text
+Deployment
+    ↓
+desired rollout / replica configuration
+    ↓
+ReplicaSet
+    ↓
+maintains required Pods
+    ↓
+Pod
+```
+
+Also reinforce:
+
+- ClusterIP
+- NodePort
+- exposure
+- attack surface
+- namespace boundaries
+
+## Networking
+
+Continue reinforcing:
+
+```text
+DNS
  ↓
-systemd-resolved (127.0.0.53)
+Traefik
  ↓
-CoreDNS (192.168.0.10)
+Ingress
  ↓
-web.home.arpa = 192.168.0.10
+Service
+ ↓
+Endpoint
+ ↓
+Pod
+```
 
-This proves the laptop now automatically uses the homelab DNS path.
+Do not force memorization.
 
-6. Public/upstream DNS resolution succeeded
+Rebuild this mental model through future practical use.
 
-Test:
+---
 
-dig google.nl
+# Recovery Limitation Discovered
 
-Result:
+Project 01 configuration in Git is not yet sufficient to rebuild the entire platform from a completely new physical server.
 
-status: NOERROR
-google.nl → 216.58.198.35
+Current recovery capability:
 
-Conclusion: public DNS resolution still works. The intended forwarding
-path is functioning end-to-end from the client perspective.
+```text
+New server
+   │
+   ├── Ubuntu installation        MANUAL
+   │
+   ├── server configuration       MANUAL
+   │
+   ├── networking                 MANUAL / PARTLY DOCUMENTED
+   │
+   ├── k3s installation           MANUAL
+   │
+   ▼
+Kubernetes available
+   │
+   ▼
+Git manifests
+   │
+   ▼
+Kubernetes workloads recoverable
+```
 
-Acceptance criteria status
+Git currently contains important desired-state configuration, but not complete server/platform provisioning.
 
-Laptop receives 192.168.0.10 automatically as DNS through
-DHCP.
+Future projects must progressively improve:
 
-web.home.arpa resolves to 192.168.0.10 without manual
-resolvectl.
+- reproducibility
+- server provisioning
+- automation
+- backup
+- disaster recovery
+- GitOps
+- infrastructure as code
 
-Public DNS names resolve.
+---
 
-Verify http://web.home.arpa in Brave after the persistent DHCP
-DNS change.
+# Project 01 Gate Decision
 
-Investigate why 192.168.0.1 is also supplied as DNS while
-Secondary DNS is blank.
+**PASS — Proceed to Project 02**
 
-Deliberately break/test DNS and troubleshoot it later.
+Project 01 does not need to be repeated.
 
-Update architecture documentation with final as-built state
-if investigation changes anything.
+Project 02 may increase in scope, but should continue exercising weaker Project 01 skills.
 
-Exact stopping point
+Difficulty should increase through:
 
-We were about to perform the final user-facing end-to-end test:
+- more responsibility
+- more components
+- less guidance
+- repeated use of existing skills
+- new failure scenarios
+- stronger evidence requirements
 
-Open in Brave:
-http://web.home.arpa
+---
 
-Next session starts here.
+# Skill Passport — Project 01 Exit State
 
-First observe whether the nginx page loads. Do not change configuration
-before this test.
+No skill is promoted to 🟢 solely because Project 01 was completed.
 
-Evidence / learning today
+A 🟢 level requires:
 
-Network / DNS
+- independent application;
+- transfer to another practical situation;
+- reproduction after at least 48 hours;
+- ability to explain why it works.
 
-Practiced and connected:
+Current conservative levels:
 
-Same-subnet laptop → homeserver connectivity.
-
-Difference between a DNS server and a default gateway.
-
-DHCP distributes DNS configuration to clients.
-
-Existing DHCP leases can temporarily retain old configuration.
-
-systemd-resolved is the laptop's local resolver.
-
-127.0.0.53 is the local stub resolver, not the homelab DNS server
-itself.
-
-dig @server name explicitly queries a chosen DNS server.
-
-dig name uses the client's configured resolver path.
-
-CoreDNS local records and upstream resolution were tested
-separately.
-
-Evidence was gathered at multiple layers instead of immediately
-changing configuration.
-
-Troubleshooting method
-
-Used:
-
-observe
-  ↓
-form hypothesis
-  ↓
-test one layer
-  ↓
-collect evidence
-  ↓
-move to next layer
-
-No skill is promoted to 🟢 based on today's work alone; independent
-reproduction and retention evidence ≥48 hours later are still required.
-
-Open Kubernetes inventory issue --- parked
-
-Do not continue this first next session unless it becomes relevant
-to the current network work.
-
-Known Service inventory includes:
-
-default/web           NodePort    30007   no endpoints
-web/my-web-service    ClusterIP            → nginx Pod
-web/web               NodePort    30008   → nginx Pod
-
-Ingress currently routes to:
-
-web Service :80 → nginx Pod
-
-There may be unnecessary/orphan Services, but nothing should be deleted
-until we deliberately return to inventory/cleanup.
-
-Daily Skill Progress --- 28-09-2026
-
-╔════════════════════ DAILY SKILL PROGRESS — 28-09-2026 ════════════════════╗
-
+```text
                                                 LEVEL
+
  1  Git / Repository / Governance               🟡 2
  2  Linux                                       🟡 2
  3  Server Foundation                           🟡 2
@@ -293,28 +657,90 @@ Daily Skill Progress --- 28-09-2026
 13  Reliability / Backup / Disaster Recovery    🟠 1
 14  Cloud Platform                              🔴 0
 15  Hybrid / Multi-environment Architecture     🔴 0
-16  Chaos / Incident Response                   🟠 1
-17  Employer Portfolio / Assessment             🟠 1
+16  Chaos / Incident Response                   🟡 2
+17  Employer Portfolio / Assessment             🟡 2
 18  Final Zero-to-Production Rebuild             🔴 0
+```
 
-TODAY'S EVIDENCE
-Network / DNS:
-  DHCP → client DNS configuration             ✓
-  Direct CoreDNS query                        ✓
-  Automatic local DNS query                   ✓
-  Public/upstream DNS query                   ✓
-  Layer-by-layer troubleshooting              ✓
+Changes since the previous session:
 
-No level promotion today.
+```text
+Chaos / Incident Response:
+🟠 1 → 🟡 2
 
-LEVELS
-🔴 0 Niet bekend    🟠 1 Herkenning    🟡 2 Begeleid
-🟢 3 Zelfstandig    🔵 4 Engineer      🟣 5 Architect
+Employer Portfolio / Assessment:
+🟠 1 → 🟡 2
+```
 
-🟢 requires independent evidence + transfer + reproduction ≥48h later
-╚═════════════════════════════════════════════════════════════════════════════╝
+Reason:
 
-Next session
+Project 01 now contains guided practical evidence for deliberate failure, investigation, recovery, incident documentation, architecture documentation and formal assessment.
 
-Start with: open http://web.home.arpa in Brave and observe the
-result.
+This is sufficient for **guided level**, but not yet independent level.
+
+---
+
+# Important Project 01 Evidence
+
+Git commits include:
+
+```text
+ee29458  progress project 01 mini-platform
+f448edc  break fix mini-platform
+2e24427  manifest cleanup. removed nodeport from apps/service
+6bf065f  mini platform architecture
+db32cdc  project-01-assessment
+```
+
+Evidence exists for:
+
+- architecture
+- desired state
+- troubleshooting
+- deliberate failure
+- recovery
+- cleanup
+- Git workflow
+- assessment
+
+---
+
+# Exact Stopping Point
+
+Project 01 is complete.
+
+The next activity is **not another Project 01 exercise**.
+
+Next session begins with:
+
+# Project 02 — Architecture / Requirements
+
+Before selecting technology:
+
+```text
+Problem
+  ↓
+Requirements
+  ↓
+Options
+  ↓
+Trade-offs
+  ↓
+Architecture choice
+  ↓
+Build
+```
+
+Project 02 should build a larger real platform capability while reusing the foundations from Project 01.
+
+---
+
+# Next Session
+
+Start with:
+
+**Design Project 02 based on the Project 01 assessment and Skill Passport.**
+
+The first question should be:
+
+**What real platform problem will Project 02 solve?**
