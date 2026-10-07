@@ -6,7 +6,6 @@ metadata:
   labels:
     app: nginx
 spec:
-  banaan: 1
   replicas: 1
   selector:
     matchLabels:
