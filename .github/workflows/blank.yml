@@ -13,13 +13,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
+        uses: actions/checkout@v4
       - name: Look inside the runner
         run: |
           echo "=== Waar ben ik? ==="
           pwd
           echo "=== Wat staat hier? ==="
-          ls -la  
-        uses: actions/checkout@v4
+          ls -la    
       - name: Check for kubectl
         run: which kubectl
       - name: Validate deployment
