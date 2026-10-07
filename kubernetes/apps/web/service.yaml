@@ -4,7 +4,6 @@ metadata:
   name: web
   namespace: web
 spec:
-  banaan: 1
   type: ClusterIP
   selector:
     app: nginx
