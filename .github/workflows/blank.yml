@@ -20,6 +20,9 @@ jobs:
           pwd
           echo "=== Wat staat hier? ==="
           ls -la    
+          echo "=== Welke branch/commit heb ik? ==="
+          git branch --show-current
+          git rev-parse --short HEAD    
       - name: Check for kubectl
         run: which kubectl
       - name: Validate deployment
