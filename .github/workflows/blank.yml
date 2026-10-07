@@ -23,6 +23,8 @@ jobs:
           echo "=== Welke branch/commit heb ik? ==="
           git branch --show-current
           git rev-parse --short HEAD    
+          git status
+          git log --oneline -3 
       - name: Check for kubectl
         run: which kubectl
       - name: Validate deployment
