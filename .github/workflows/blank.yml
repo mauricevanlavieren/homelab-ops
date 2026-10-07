@@ -31,5 +31,5 @@ jobs:
         uses: docker://ghcr.io/yannh/kubeconform:latest
         with:
           entrypoint: '/kubeconform'
-          args: "-summary -strict kubernetes/apps/web/deployment.yaml"    
+          args: "-summary -strict kubernetes/apps/web/"    
 
