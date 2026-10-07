@@ -16,6 +16,9 @@ jobs:
         uses: actions/checkout@v4
       - name: Check for kubectl
         run: which kubectl
-      - name: check for yaml issues
-        run: kubectl apply -f kubernetes/apps/web/deployment.yaml --dry-run=client
+      - name: Validate deployment
+        uses: docker://ghcr.io/yannh/kubeconform:latest
+        with:
+          entrypoint: '/kubeconform'
+          args: "-summary kubernetes/apps/web/deployment.yaml"    
 
