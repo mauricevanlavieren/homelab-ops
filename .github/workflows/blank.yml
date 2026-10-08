@@ -32,6 +32,12 @@ jobs:
         with:
           entrypoint: '/kubeconform'
           args: "-summary -strict kubernetes/"
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}      
       - name: Build demo container image
         run: docker build -t project02-demo:v1 ./demo-app    
 
