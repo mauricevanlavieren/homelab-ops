@@ -17,7 +17,7 @@ spec:
     spec:
       containers:
       - name: nginx
-        image: ghcr.io/mauricevanlavieren/project02-demo:v1
+        image: ghcr.io/mauricevanlavieren/project02-demo:60e7b03e97be930d3e0618a3d0b461bae928bdab
         ports:
         - containerPort: 80
 
