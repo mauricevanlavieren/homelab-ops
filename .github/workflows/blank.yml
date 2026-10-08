@@ -31,5 +31,7 @@ jobs:
         uses: docker://ghcr.io/yannh/kubeconform:latest
         with:
           entrypoint: '/kubeconform'
-          args: "-summary -strict kubernetes/"    
+          args: "-summary -strict kubernetes/"
+      - name: Build demo container image
+        run: docker build -t project02-demo:v1 ./demo-app    
 
