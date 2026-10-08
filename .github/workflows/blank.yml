@@ -39,5 +39,6 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}      
       - name: Build demo container image
-        run: docker build -t project02-demo:v1 ./demo-app    
-
+        run: docker build -t ghcr.io/mauricevanlavieren/project02-demo:v1 ./demo-app
+      - name: Push demo container image
+        run: docker push ghcr.io/mauricevanlavieren/project02-demo:v1    
